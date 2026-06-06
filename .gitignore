@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# MindUp runtime state
+data/
+*.sqlite
+*.sqlite3
+*.db

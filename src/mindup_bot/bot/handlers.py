@@ -6,6 +6,7 @@ from typing import Any
 
 from telegram import Update
 from telegram.constants import ChatAction
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -120,10 +121,6 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = await ensure_user(update, context)
     await update.effective_message.reply_text(
         format_settings(user),
-        reply_markup=main_menu(user.get("interface_language")),
-    )
-    await update.effective_message.reply_text(
-        "👇 Choose a setting:" if user.get("interface_language") == "en" else "👇 Выбери настройку:",
         reply_markup=settings_keyboard(user.get("interface_language")),
     )
 
@@ -156,11 +153,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     query = update.callback_query
     if query is None:
         return
-    await query.answer()
     user = await ensure_user(update, context)
     data = query.data or ""
 
     if data.startswith("menu:"):
+        await query.answer()
         action = data.split(":", 1)[1]
         if action == "practice":
             await start_practice(update, context, user)
@@ -187,8 +184,17 @@ async def handle_onboarding_callback(
     callback_data: str,
 ) -> None:
     db: Database = context.application.bot_data["db"]
+    query = update.callback_query
+    if query is None:
+        return
     _, step, value = callback_data.split(":", 2)
     data = dict(user.get("onboarding_data") or {})
+
+    if step == "topics_done" and not data.get("topics"):
+        await query.answer("Выбери хотя бы одну тему.", show_alert=True)
+        return
+
+    await query.answer()
 
     if step == "topics":
         selected = list(data.get("topics") or [])
@@ -202,9 +208,6 @@ async def handle_onboarding_callback(
         return
 
     if step == "topics_done":
-        if not data.get("topics"):
-            await update.callback_query.message.reply_text("Выбери хотя бы одну тему.")
-            return
         await db.update_onboarding_data(user["telegram_id"], data, "correction_style")
         await ask_onboarding_step(update, context, "correction_style", data)
         return
@@ -241,6 +244,7 @@ async def handle_settings_callback(
     query = update.callback_query
     if query is None or query.message is None:
         return
+    await query.answer()
 
     db: Database = context.application.bot_data["db"]
     language = user.get("interface_language")
@@ -250,7 +254,8 @@ async def handle_settings_callback(
         field = parts[2]
         if field == "topics":
             text = "📚 Choose topics:" if language == "en" else "📚 Выбери темы:"
-            await query.message.reply_text(
+            await edit_callback_message(
+                query,
                 text,
                 reply_markup=topics_keyboard(
                     user.get("topics") or [],
@@ -270,7 +275,8 @@ async def handle_settings_callback(
         if field not in prompts:
             return
         prompt_en, prompt_ru = prompts[field]
-        await query.message.reply_text(
+        await edit_callback_message(
+            query,
             prompt_en if language == "en" else prompt_ru,
             reply_markup=settings_option_keyboard(field, settings_options_for(field, language)),
         )
@@ -287,12 +293,8 @@ async def handle_settings_callback(
             settings_obj: Settings = context.application.bot_data["settings"]
             schedule_user_reminder(context.application, fresh_user, settings_obj.app_timezone)
 
-        saved = "✅ Saved." if fresh_user.get("interface_language") == "en" else "✅ Сохранено."
-        await query.message.reply_text(
-            saved,
-            reply_markup=main_menu(fresh_user.get("interface_language")),
-        )
-        await query.message.reply_text(
+        await edit_callback_message(
+            query,
             format_settings(fresh_user),
             reply_markup=settings_keyboard(fresh_user.get("interface_language")),
         )
@@ -315,14 +317,8 @@ async def handle_settings_callback(
         fresh_user = await db.get_user(user["telegram_id"])
         if fresh_user is None:
             return
-        saved = "✅ Topics saved." if fresh_user.get("interface_language") == "en" else (
-            "✅ Темы сохранены."
-        )
-        await query.message.reply_text(
-            saved,
-            reply_markup=main_menu(fresh_user.get("interface_language")),
-        )
-        await query.message.reply_text(
+        await edit_callback_message(
+            query,
             format_settings(fresh_user),
             reply_markup=settings_keyboard(fresh_user.get("interface_language")),
         )
@@ -338,47 +334,49 @@ async def ask_onboarding_step(
     if update.effective_user:
         await db.set_onboarding_step(update.effective_user.id, step)
 
-    message = update.effective_message
-    if update.callback_query and update.callback_query.message:
-        message = update.callback_query.message
-
     if step == "english_level":
-        await message.reply_text(
+        await send_or_edit_inline(
+            update,
             "🏆 Вопрос 1 из 6\n"
             "Прогресс: ▰▱▱▱▱▱ 17%\n\n"
             "Какой у тебя примерный уровень английского?",
             reply_markup=option_keyboard(step, LEVEL_OPTIONS),
         )
     elif step == "goal":
-        await message.reply_text(
+        await send_or_edit_inline(
+            update,
             "🎯 Вопрос 2 из 6\n"
             "Прогресс: ▰▰▱▱▱▱ 33%\n\n"
             "Для чего тебе английский?",
             reply_markup=option_keyboard(step, GOAL_OPTIONS),
         )
     elif step == "topics":
-        await message.reply_text(
+        await send_or_edit_inline(
+            update,
             "📚 Вопрос 3 из 6\n"
             "Прогресс: ▰▰▰▱▱▱ 50%\n\n"
             "Какие темы интересны? Можно выбрать несколько.",
             reply_markup=topics_keyboard(data.get("topics") or []),
         )
     elif step == "correction_style":
-        await message.reply_text(
+        await send_or_edit_inline(
+            update,
             "🧾 Вопрос 4 из 6\n"
             "Прогресс: ▰▰▰▰▱▱ 67%\n\n"
             "Какой стиль исправлений предпочитаешь?",
             reply_markup=option_keyboard(step, CORRECTION_OPTIONS),
         )
     elif step == "reminder_time":
-        await message.reply_text(
+        await send_or_edit_inline(
+            update,
             "🔔 Вопрос 5 из 6\n"
             "Прогресс: ▰▰▰▰▰▱ 83%\n\n"
             "Во сколько напоминать о практике?",
             reply_markup=option_keyboard(step, REMINDER_OPTIONS),
         )
     elif step == "interface_language":
-        await message.reply_text(
+        await send_or_edit_inline(
+            update,
             "🌐 Вопрос 6 из 6\n"
             "Прогресс: ▰▰▰▰▰▰ 100%\n\n"
             "Предпочитаемый язык интерфейса:",
@@ -642,6 +640,22 @@ async def send_text_and_voice(
             audio_path.unlink(missing_ok=True)
     except Exception:
         logger.exception("TTS failed; text response was already sent")
+
+
+async def send_or_edit_inline(update: Update, text: str, reply_markup: Any) -> None:
+    if update.callback_query is not None:
+        await edit_callback_message(update.callback_query, text, reply_markup=reply_markup)
+        return
+    await update.effective_message.reply_text(text, reply_markup=reply_markup)
+
+
+async def edit_callback_message(query: Any, text: str, reply_markup: Any) -> None:
+    try:
+        await query.edit_message_text(text=text, reply_markup=reply_markup)
+    except BadRequest as exc:
+        if "Message is not modified" in str(exc):
+            return
+        raise
 
 
 async def handle_menu_text(

@@ -10,6 +10,13 @@ HELP_LABEL = "❓ Помощь"
 FINISH_LABEL = "✅ Завершить"
 MENU_LABEL = "🏠 Меню"
 
+START_PRACTICE_LABEL_EN = "🚀 Start practice"
+PROFILE_LABEL_EN = "📊 My profile"
+SETTINGS_LABEL_EN = "⚙️ Settings"
+HELP_LABEL_EN = "❓ Help"
+FINISH_LABEL_EN = "✅ Finish"
+MENU_LABEL_EN = "🏠 Menu"
+
 
 LEVEL_OPTIONS = [
     ("A2", "A2"),
@@ -19,6 +26,14 @@ LEVEL_OPTIONS = [
     ("Не уверен", "not_sure"),
 ]
 
+LEVEL_OPTIONS_EN = [
+    ("A2", "A2"),
+    ("B1", "B1"),
+    ("B1+", "B1+"),
+    ("B2", "B2"),
+    ("Not sure", "not_sure"),
+]
+
 GOAL_OPTIONS = [
     ("💼 Работа", "work"),
     ("🌍 Путешествия", "travel"),
@@ -26,6 +41,15 @@ GOAL_OPTIONS = [
     ("🎙 Собеседования", "interviews"),
     ("🗣 Уверенность в речи", "speaking_confidence"),
     ("🧠 Мышление и самовыражение", "thinking_self_expression"),
+]
+
+GOAL_OPTIONS_EN = [
+    ("💼 Work", "work"),
+    ("🌍 Travel", "travel"),
+    ("🎓 Study", "study"),
+    ("🎙 Interviews", "interviews"),
+    ("🗣 Speaking confidence", "speaking_confidence"),
+    ("🧠 Thinking and self-expression", "thinking_self_expression"),
 ]
 
 TOPIC_OPTIONS = [
@@ -39,10 +63,27 @@ TOPIC_OPTIONS = [
     ("🎲 Умные случайные темы", "random_smart_topics"),
 ]
 
+TOPIC_OPTIONS_EN = [
+    ("💼 Work and career", "work_career"),
+    ("🧠 Psychology", "psychology"),
+    ("💻 Technology", "technology"),
+    ("🎬 Culture and media", "culture_media"),
+    ("🏙 Everyday life", "everyday_life"),
+    ("📈 Business", "business"),
+    ("🌐 Society", "society"),
+    ("🎲 Random smart topics", "random_smart_topics"),
+]
+
 CORRECTION_OPTIONS = [
     ("🌱 Мягкие исправления", "soft"),
     ("🎯 Прямые исправления", "direct"),
     ("🧾 Только после сессии", "after_session"),
+]
+
+CORRECTION_OPTIONS_EN = [
+    ("🌱 Soft corrections", "soft"),
+    ("🎯 Direct corrections", "direct"),
+    ("🧾 Only after the session", "after_session"),
 ]
 
 REMINDER_OPTIONS = [
@@ -50,6 +91,13 @@ REMINDER_OPTIONS = [
     ("☀️ Днем", "afternoon"),
     ("🌙 Вечером", "evening"),
     ("🔕 Без напоминаний", "none"),
+]
+
+REMINDER_OPTIONS_EN = [
+    ("🌅 Morning", "morning"),
+    ("☀️ Afternoon", "afternoon"),
+    ("🌙 Evening", "evening"),
+    ("🔕 No reminders", "none"),
 ]
 
 LANGUAGE_OPTIONS = [
@@ -61,15 +109,17 @@ LANGUAGE_OPTIONS = [
 def main_menu(language: str | None = "ru") -> ReplyKeyboardMarkup:
     if language == "en":
         buttons = [
-            ["🚀 Start practice", "📊 My profile"],
-            ["⚙️ Settings", "❓ Help"],
+            [START_PRACTICE_LABEL_EN, PROFILE_LABEL_EN],
+            [SETTINGS_LABEL_EN, HELP_LABEL_EN],
         ]
+        placeholder = "Choose an action"
     else:
         buttons = [
             [START_PRACTICE_LABEL, PROFILE_LABEL],
             [SETTINGS_LABEL, HELP_LABEL],
         ]
-    return ReplyKeyboardMarkup(buttons, resize_keyboard=True, input_field_placeholder="Выбери действие")
+        placeholder = "Выбери действие"
+    return ReplyKeyboardMarkup(buttons, resize_keyboard=True, input_field_placeholder=placeholder)
 
 
 def option_keyboard(step: str, options: list[tuple[str, str]]) -> InlineKeyboardMarkup:
@@ -78,13 +128,66 @@ def option_keyboard(step: str, options: list[tuple[str, str]]) -> InlineKeyboard
     )
 
 
-def topics_keyboard(selected: list[str]) -> InlineKeyboardMarkup:
+def settings_keyboard(language: str | None = "ru") -> InlineKeyboardMarkup:
+    if language == "en":
+        buttons = [
+            [InlineKeyboardButton("🏆 Level", callback_data="settings:edit:english_level")],
+            [InlineKeyboardButton("🎯 Goal", callback_data="settings:edit:goal")],
+            [InlineKeyboardButton("📚 Topics", callback_data="settings:edit:topics")],
+            [InlineKeyboardButton("🧾 Corrections", callback_data="settings:edit:correction_style")],
+            [InlineKeyboardButton("🔔 Reminder", callback_data="settings:edit:reminder_time")],
+            [InlineKeyboardButton("🌐 Interface language", callback_data="settings:edit:interface_language")],
+        ]
+    else:
+        buttons = [
+            [InlineKeyboardButton("🏆 Уровень", callback_data="settings:edit:english_level")],
+            [InlineKeyboardButton("🎯 Цель", callback_data="settings:edit:goal")],
+            [InlineKeyboardButton("📚 Темы", callback_data="settings:edit:topics")],
+            [InlineKeyboardButton("🧾 Исправления", callback_data="settings:edit:correction_style")],
+            [InlineKeyboardButton("🔔 Напоминание", callback_data="settings:edit:reminder_time")],
+            [InlineKeyboardButton("🌐 Язык интерфейса", callback_data="settings:edit:interface_language")],
+        ]
+    return InlineKeyboardMarkup(buttons)
+
+
+def settings_option_keyboard(field: str, options: list[tuple[str, str]]) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(label, callback_data=f"settings:set:{field}:{value}")]
+            for label, value in options
+        ]
+    )
+
+
+def settings_options_for(field: str, language: str | None = "ru") -> list[tuple[str, str]]:
+    if field == "english_level":
+        return LEVEL_OPTIONS_EN if language == "en" else LEVEL_OPTIONS
+    if field == "goal":
+        return GOAL_OPTIONS_EN if language == "en" else GOAL_OPTIONS
+    if field == "correction_style":
+        return CORRECTION_OPTIONS_EN if language == "en" else CORRECTION_OPTIONS
+    if field == "reminder_time":
+        return REMINDER_OPTIONS_EN if language == "en" else REMINDER_OPTIONS
+    if field == "interface_language":
+        return LANGUAGE_OPTIONS
+    raise ValueError(f"Unsupported settings field: {field}")
+
+
+def topics_keyboard(
+    selected: list[str],
+    mode: str = "onb",
+    language: str | None = "ru",
+) -> InlineKeyboardMarkup:
     rows = []
     selected_set = set(selected)
-    for label, value in TOPIC_OPTIONS:
+    topic_options = TOPIC_OPTIONS_EN if language == "en" else TOPIC_OPTIONS
+    for label, value in topic_options:
         prefix = "✅" if value in selected_set else "▫️"
-        rows.append([InlineKeyboardButton(f"{prefix} {label}", callback_data=f"onb:topics:{value}")])
-    rows.append([InlineKeyboardButton("Готово", callback_data="onb:topics_done:done")])
+        callback_prefix = "settings:topic" if mode == "settings" else "onb:topics"
+        rows.append([InlineKeyboardButton(f"{prefix} {label}", callback_data=f"{callback_prefix}:{value}")])
+    done_callback = "settings:topics_done:done" if mode == "settings" else "onb:topics_done:done"
+    done_label = "Done" if language == "en" else "Готово"
+    rows.append([InlineKeyboardButton(done_label, callback_data=done_callback)])
     return InlineKeyboardMarkup(rows)
 
 
@@ -94,3 +197,13 @@ def practice_reply_keyboard() -> ReplyKeyboardMarkup:
         resize_keyboard=True,
         input_field_placeholder="Отправь voice или напиши ответ",
     )
+
+
+def practice_reply_keyboard_for(language: str | None = "ru") -> ReplyKeyboardMarkup:
+    if language == "en":
+        return ReplyKeyboardMarkup(
+            [[FINISH_LABEL_EN, MENU_LABEL_EN]],
+            resize_keyboard=True,
+            input_field_placeholder="Send a voice or type your answer",
+        )
+    return practice_reply_keyboard()

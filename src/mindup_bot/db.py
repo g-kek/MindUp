@@ -225,6 +225,44 @@ class Database:
             )
             await db.commit()
 
+    async def update_user_settings(self, telegram_id: int, updates: dict[str, Any]) -> None:
+        allowed_fields = {
+            "interface_language",
+            "english_level",
+            "goal",
+            "topics",
+            "correction_style",
+            "reminder_time",
+        }
+        unknown_fields = set(updates) - allowed_fields
+        if unknown_fields:
+            raise ValueError(f"Unsupported settings fields: {sorted(unknown_fields)}")
+        if not updates:
+            return
+
+        assignments = []
+        values = []
+        for field, value in updates.items():
+            if field == "topics":
+                assignments.append("topics_json = ?")
+                values.append(_json_dumps(value or []))
+            else:
+                assignments.append(f"{field} = ?")
+                values.append(value)
+        values.append(telegram_id)
+
+        async with self.connect() as db:
+            await db.execute(
+                f"""
+                UPDATE users
+                SET {", ".join(assignments)},
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE telegram_id = ?
+                """,
+                tuple(values),
+            )
+            await db.commit()
+
     async def restart_onboarding(self, telegram_id: int) -> None:
         async with self.connect() as db:
             await db.execute(

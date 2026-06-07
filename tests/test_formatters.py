@@ -1,5 +1,5 @@
 from mindup_bot.ai.schemas import Feedback
-from mindup_bot.bot.formatters import format_feedback
+from mindup_bot.bot.formatters import format_feedback, format_settings
 
 
 def test_format_feedback_contains_core_sections() -> None:
@@ -28,3 +28,22 @@ def test_format_feedback_contains_core_sections() -> None:
     assert "🧾 Разбор сессии" in text
     assert "🏆 Estimated CEFR: B1" in text
     assert "I think it good -> I think it is useful." in text
+
+
+def test_format_settings_uses_interface_language() -> None:
+    user = {
+        "english_level": "B1",
+        "goal": "speaking_confidence",
+        "topics": ["technology"],
+        "correction_style": "after_session",
+        "reminder_time": "none",
+        "interface_language": "en",
+    }
+
+    text = format_settings(user)
+
+    assert "⚙️ Settings" in text
+    assert "Speaking confidence" in text
+    assert "Technology" in text
+    assert "No reminders" in text
+    assert "Настройки" not in text

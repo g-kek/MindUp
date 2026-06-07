@@ -27,12 +27,21 @@ from mindup_bot.bot.keyboards import (
     LEVEL_OPTIONS,
     MENU_LABEL,
     PROFILE_LABEL,
+    PROFILE_LABEL_EN,
     REMINDER_OPTIONS,
     SETTINGS_LABEL,
+    SETTINGS_LABEL_EN,
     START_PRACTICE_LABEL,
+    START_PRACTICE_LABEL_EN,
+    FINISH_LABEL_EN,
+    HELP_LABEL_EN,
+    MENU_LABEL_EN,
     main_menu,
     option_keyboard,
-    practice_reply_keyboard,
+    practice_reply_keyboard_for,
+    settings_keyboard,
+    settings_option_keyboard,
+    settings_options_for,
     topics_keyboard,
 )
 from mindup_bot.bot.reminders import schedule_user_reminder
@@ -66,9 +75,11 @@ def register_handlers(application: Application) -> None:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = await ensure_user(update, context)
     if user["onboarding_completed"]:
+        language = user.get("interface_language")
+        text = "👋 dialogum\n\nChoose an action:" if language == "en" else "👋 dialogum\n\nВыбери действие:"
         await update.effective_message.reply_text(
-            "👋 dialogum\n\nВыбери действие:",
-            reply_markup=main_menu(user.get("interface_language")),
+            text,
+            reply_markup=main_menu(language),
         )
         return
 
@@ -85,9 +96,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = await ensure_user(update, context)
+    language = user.get("interface_language")
+    text = "🏠 dialogum menu\n\nChoose an action:" if language == "en" else (
+        "🏠 Меню dialogum\n\nВыбери действие:"
+    )
     await update.effective_message.reply_text(
-        "🏠 Меню dialogum\n\nВыбери действие:",
-        reply_markup=main_menu(user.get("interface_language")),
+        text,
+        reply_markup=main_menu(language),
     )
 
 
@@ -107,13 +122,17 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         format_settings(user),
         reply_markup=main_menu(user.get("interface_language")),
     )
+    await update.effective_message.reply_text(
+        "👇 Choose a setting:" if user.get("interface_language") == "en" else "👇 Выбери настройку:",
+        reply_markup=settings_keyboard(user.get("interface_language")),
+    )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await ensure_user(update, context)
+    user = await ensure_user(update, context)
     await update.effective_message.reply_text(
-        format_help(),
-        reply_markup=main_menu(),
+        format_help(user.get("interface_language")),
+        reply_markup=main_menu(user.get("interface_language")),
     )
 
 
@@ -122,8 +141,11 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     db: Database = context.application.bot_data["db"]
     session = await db.get_active_session(user["telegram_id"])
     if not session:
+        message = "No active session right now." if user.get("interface_language") == "en" else (
+            "Сейчас нет активной сессии."
+        )
         await update.effective_message.reply_text(
-            "Сейчас нет активной сессии.",
+            message,
             reply_markup=main_menu(user.get("interface_language")),
         )
         return
@@ -152,6 +174,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data.startswith("onb:"):
         await handle_onboarding_callback(update, context, user, data)
+        return
+
+    if data.startswith("settings:"):
+        await handle_settings_callback(update, context, user, data)
 
 
 async def handle_onboarding_callback(
@@ -191,14 +217,115 @@ async def handle_onboarding_callback(
         if completed_user:
             settings_obj: Settings = context.application.bot_data["settings"]
             schedule_user_reminder(context.application, completed_user, settings_obj.app_timezone)
+        done_text = (
+            "Done. Your profile is saved. You can start your first free session."
+            if data.get("interface_language") == "en"
+            else "Готово. Профиль сохранен. Можем провести первую бесплатную сессию."
+        )
         await update.callback_query.message.reply_text(
-            "Готово. Профиль сохранен. Можем провести первую бесплатную сессию.",
+            done_text,
             reply_markup=main_menu(data.get("interface_language")),
         )
         return
 
     await db.update_onboarding_data(user["telegram_id"], data, next_step)
     await ask_onboarding_step(update, context, next_step, data)
+
+
+async def handle_settings_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user: dict[str, Any],
+    callback_data: str,
+) -> None:
+    query = update.callback_query
+    if query is None or query.message is None:
+        return
+
+    db: Database = context.application.bot_data["db"]
+    language = user.get("interface_language")
+    parts = callback_data.split(":")
+
+    if len(parts) >= 3 and parts[1] == "edit":
+        field = parts[2]
+        if field == "topics":
+            text = "📚 Choose topics:" if language == "en" else "📚 Выбери темы:"
+            await query.message.reply_text(
+                text,
+                reply_markup=topics_keyboard(
+                    user.get("topics") or [],
+                    mode="settings",
+                    language=language,
+                ),
+            )
+            return
+
+        prompts = {
+            "english_level": ("🏆 Choose your level:", "🏆 Выбери уровень:"),
+            "goal": ("🎯 Choose your goal:", "🎯 Выбери цель:"),
+            "correction_style": ("🧾 Choose correction style:", "🧾 Выбери стиль исправлений:"),
+            "reminder_time": ("🔔 Choose reminder time:", "🔔 Выбери время напоминания:"),
+            "interface_language": ("🌐 Choose interface language:", "🌐 Выбери язык интерфейса:"),
+        }
+        if field not in prompts:
+            return
+        prompt_en, prompt_ru = prompts[field]
+        await query.message.reply_text(
+            prompt_en if language == "en" else prompt_ru,
+            reply_markup=settings_option_keyboard(field, settings_options_for(field, language)),
+        )
+        return
+
+    if len(parts) >= 4 and parts[1] == "set":
+        field = parts[2]
+        value = parts[3]
+        await db.update_user_settings(user["telegram_id"], {field: value})
+        fresh_user = await db.get_user(user["telegram_id"])
+        if fresh_user is None:
+            return
+        if field == "reminder_time":
+            settings_obj: Settings = context.application.bot_data["settings"]
+            schedule_user_reminder(context.application, fresh_user, settings_obj.app_timezone)
+
+        saved = "✅ Saved." if fresh_user.get("interface_language") == "en" else "✅ Сохранено."
+        await query.message.reply_text(
+            saved,
+            reply_markup=main_menu(fresh_user.get("interface_language")),
+        )
+        await query.message.reply_text(
+            format_settings(fresh_user),
+            reply_markup=settings_keyboard(fresh_user.get("interface_language")),
+        )
+        return
+
+    if len(parts) >= 3 and parts[1] == "topic":
+        topic = parts[2]
+        selected = list(user.get("topics") or [])
+        if topic in selected:
+            selected.remove(topic)
+        else:
+            selected.append(topic)
+        await db.update_user_settings(user["telegram_id"], {"topics": selected})
+        await query.edit_message_reply_markup(
+            reply_markup=topics_keyboard(selected, mode="settings", language=language)
+        )
+        return
+
+    if len(parts) >= 3 and parts[1] == "topics_done":
+        fresh_user = await db.get_user(user["telegram_id"])
+        if fresh_user is None:
+            return
+        saved = "✅ Topics saved." if fresh_user.get("interface_language") == "en" else (
+            "✅ Темы сохранены."
+        )
+        await query.message.reply_text(
+            saved,
+            reply_markup=main_menu(fresh_user.get("interface_language")),
+        )
+        await query.message.reply_text(
+            format_settings(fresh_user),
+            reply_markup=settings_keyboard(fresh_user.get("interface_language")),
+        )
 
 
 async def ask_onboarding_step(
@@ -265,7 +392,10 @@ async def start_practice(
     user: dict[str, Any],
 ) -> None:
     if not user["onboarding_completed"]:
-        await update.effective_message.reply_text("Сначала закончим короткую настройку.")
+        message = "Let's finish the quick setup first." if user.get("interface_language") == "en" else (
+            "Сначала закончим короткую настройку."
+        )
+        await update.effective_message.reply_text(message)
         await ask_onboarding_step(
             update,
             context,
@@ -277,10 +407,19 @@ async def start_practice(
     db: Database = context.application.bot_data["db"]
     existing = await db.get_active_session(user["telegram_id"])
     if existing:
+        if user.get("interface_language") == "en":
+            message = (
+                f"▶️ Continuing topic: {existing['topic_title']}\n\n"
+                "Send a voice message or type your answer in English."
+            )
+        else:
+            message = (
+                f"▶️ Продолжаем тему: {existing['topic_title']}\n\n"
+                "Отправь voice или напиши ответ на английском."
+            )
         await update.effective_message.reply_text(
-            f"▶️ Продолжаем тему: {existing['topic_title']}\n\n"
-            "Отправь voice или напиши ответ на английском.",
-            reply_markup=practice_reply_keyboard(),
+            message,
+            reply_markup=practice_reply_keyboard_for(user.get("interface_language")),
         )
         return
 
@@ -296,14 +435,29 @@ async def start_practice(
     session_id = await db.create_session(user["telegram_id"], topic.model_dump())
     await db.add_message(session_id, "tutor", topic.opening_question)
 
-    text = (
-        "🎙 Speaking · Задание\n"
-        "━━━━━━━━━━━━\n\n"
-        f"{topic.opening_question}\n\n"
-        "⏱ Запись: до 60 секунд\n"
-        "👇 Отправь голосовое сообщение или напиши ответ"
+    if user.get("interface_language") == "en":
+        text = (
+            "🎙 Speaking · Task\n"
+            "━━━━━━━━━━━━\n\n"
+            f"{topic.opening_question}\n\n"
+            "⏱ Recording: up to 60 seconds\n"
+            "👇 Send a voice message or type your answer"
+        )
+    else:
+        text = (
+            "🎙 Speaking · Задание\n"
+            "━━━━━━━━━━━━\n\n"
+            f"{topic.opening_question}\n\n"
+            "⏱ Запись: до 60 секунд\n"
+            "👇 Отправь голосовое сообщение или напиши ответ"
+        )
+    await send_text_and_voice(
+        update,
+        context,
+        text,
+        topic.opening_question,
+        practice_reply_keyboard_for(user.get("interface_language")),
     )
-    await send_text_and_voice(update, context, text, topic.opening_question, practice_reply_keyboard())
 
 
 async def handle_practice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -319,21 +473,30 @@ async def handle_practice_message(update: Update, context: ContextTypes.DEFAULT_
             return
 
     if not user["onboarding_completed"]:
-        await update.effective_message.reply_text("Пока отвечай кнопками в онбординге.")
+        message = "For now, answer with onboarding buttons." if user.get("interface_language") == "en" else (
+            "Пока отвечай кнопками в онбординге."
+        )
+        await update.effective_message.reply_text(message)
         return
 
     db: Database = context.application.bot_data["db"]
     session = await db.get_active_session(user["telegram_id"])
     if not session:
+        message = "Start a practice session first." if user.get("interface_language") == "en" else (
+            "Сначала начни практику."
+        )
         await update.effective_message.reply_text(
-            "Сначала начни практику.",
+            message,
             reply_markup=main_menu(user.get("interface_language")),
         )
         return
 
     user_text = await extract_user_text(update, context)
     if not user_text:
-        await update.effective_message.reply_text("Не смог разобрать сообщение. Попробуй еще раз.")
+        message = "I could not understand that. Try again." if user.get("interface_language") == "en" else (
+            "Не смог разобрать сообщение. Попробуй еще раз."
+        )
+        await update.effective_message.reply_text(message)
         return
 
     await db.add_message(session["id"], "user", user_text, _voice_file_id(update))
@@ -366,7 +529,13 @@ async def handle_practice_message(update: Update, context: ContextTypes.DEFAULT_
         )
     reply_text = reply.text_for_user()
     await db.add_message(session["id"], "tutor", reply_text)
-    await send_text_and_voice(update, context, reply_text, reply_text, practice_reply_keyboard())
+    await send_text_and_voice(
+        update,
+        context,
+        reply_text,
+        reply_text,
+        practice_reply_keyboard_for(user.get("interface_language")),
+    )
 
     if reply.should_finish:
         fresh_session = await db.get_session(session["id"])
@@ -396,11 +565,21 @@ async def extract_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if transcript:
         duration = message.voice.duration if message.voice else 0
-        await message.reply_text(
-            f"🎤 Голосовое сообщение · {duration} сек\n\n"
-            f"Расшифровка: {transcript}\n\n"
-            "🔄 Анализирую твою речь...\nAI слушает и готовит ответ 👂"
-        )
+        telegram_user = update.effective_user
+        db: Database = context.application.bot_data["db"]
+        user = await db.get_user(telegram_user.id) if telegram_user else None
+        if user and user.get("interface_language") == "en":
+            await message.reply_text(
+                f"🎤 Voice message · {duration} sec\n\n"
+                f"Transcript: {transcript}\n\n"
+                "🔄 Analyzing your speech...\nAI is listening and preparing a reply 👂"
+            )
+        else:
+            await message.reply_text(
+                f"🎤 Голосовое сообщение · {duration} сек\n\n"
+                f"Расшифровка: {transcript}\n\n"
+                "🔄 Анализирую твою речь...\nAI слушает и готовит ответ 👂"
+            )
     return transcript
 
 
@@ -438,7 +617,7 @@ async def finish_session(
         logger.exception("Failed to update memory")
 
     await update.effective_message.reply_text(
-        format_feedback(feedback),
+        format_feedback(feedback, user.get("interface_language")),
         reply_markup=main_menu(user.get("interface_language")),
     )
 
@@ -472,22 +651,22 @@ async def handle_menu_text(
     text: str,
 ) -> bool:
     normalized = text.strip()
-    if normalized in {START_PRACTICE_LABEL, "🚀 Start practice"}:
+    if normalized in {START_PRACTICE_LABEL, START_PRACTICE_LABEL_EN}:
         await start_practice(update, context, user)
         return True
-    if normalized in {PROFILE_LABEL, "📊 My profile"}:
+    if normalized in {PROFILE_LABEL, PROFILE_LABEL_EN}:
         await progress(update, context)
         return True
-    if normalized in {SETTINGS_LABEL, "⚙️ Settings"}:
+    if normalized in {SETTINGS_LABEL, SETTINGS_LABEL_EN}:
         await settings(update, context)
         return True
-    if normalized in {HELP_LABEL, "❓ Help"}:
+    if normalized in {HELP_LABEL, HELP_LABEL_EN}:
         await help_command(update, context)
         return True
-    if normalized in {MENU_LABEL, "🏠 Menu"}:
+    if normalized in {MENU_LABEL, MENU_LABEL_EN}:
         await menu(update, context)
         return True
-    if normalized == FINISH_LABEL:
+    if normalized in {FINISH_LABEL, FINISH_LABEL_EN}:
         await finish(update, context)
         return True
     return False

@@ -23,13 +23,16 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def schedule_user_reminder(application: Application, user: dict, timezone_name: str) -> None:
-    reminder = user.get("reminder_time")
-    if reminder not in REMINDER_TIMES or application.job_queue is None:
+    if application.job_queue is None:
         return
 
     job_name = f"daily-reminder:{user['telegram_id']}"
     for job in application.job_queue.get_jobs_by_name(job_name):
         job.schedule_removal()
+
+    reminder = user.get("reminder_time")
+    if reminder not in REMINDER_TIMES:
+        return
 
     reminder_time = REMINDER_TIMES[reminder].replace(tzinfo=ZoneInfo(timezone_name))
     application.job_queue.run_daily(
@@ -44,4 +47,3 @@ async def schedule_existing_reminders(application: Application, db: Database, ti
     users = await db.list_users_with_reminders()
     for user in users:
         schedule_user_reminder(application, user, timezone_name)
-

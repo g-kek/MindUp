@@ -2,6 +2,81 @@ from __future__ import annotations
 
 from mindup_bot.ai.schemas import Feedback
 
+GOAL_LABELS = {
+    "ru": {
+        "work": "Работа",
+        "travel": "Путешествия",
+        "study": "Учеба",
+        "interviews": "Собеседования",
+        "speaking_confidence": "Уверенность в речи",
+        "thinking_self_expression": "Мышление и самовыражение",
+    },
+    "en": {
+        "work": "Work",
+        "travel": "Travel",
+        "study": "Study",
+        "interviews": "Interviews",
+        "speaking_confidence": "Speaking confidence",
+        "thinking_self_expression": "Thinking and self-expression",
+    },
+}
+
+TOPIC_LABELS = {
+    "ru": {
+        "work_career": "Работа и карьера",
+        "psychology": "Психология",
+        "technology": "Технологии",
+        "culture_media": "Культура и медиа",
+        "everyday_life": "Повседневная жизнь",
+        "business": "Бизнес",
+        "society": "Общество",
+        "random_smart_topics": "Умные случайные темы",
+    },
+    "en": {
+        "work_career": "Work and career",
+        "psychology": "Psychology",
+        "technology": "Technology",
+        "culture_media": "Culture and media",
+        "everyday_life": "Everyday life",
+        "business": "Business",
+        "society": "Society",
+        "random_smart_topics": "Random smart topics",
+    },
+}
+
+CORRECTION_LABELS = {
+    "ru": {
+        "soft": "Мягкие исправления",
+        "direct": "Прямые исправления",
+        "after_session": "Только после сессии",
+    },
+    "en": {
+        "soft": "Soft corrections",
+        "direct": "Direct corrections",
+        "after_session": "Only after the session",
+    },
+}
+
+REMINDER_LABELS = {
+    "ru": {
+        "morning": "Утром",
+        "afternoon": "Днем",
+        "evening": "Вечером",
+        "none": "Без напоминаний",
+    },
+    "en": {
+        "morning": "Morning",
+        "afternoon": "Afternoon",
+        "evening": "Evening",
+        "none": "No reminders",
+    },
+}
+
+LANGUAGE_LABELS = {
+    "ru": {"ru": "Русский", "en": "English"},
+    "en": {"ru": "Russian", "en": "English"},
+}
+
 
 def progress_bar(percent: int, width: int = 10) -> str:
     safe_percent = max(0, min(100, percent))
@@ -9,11 +84,46 @@ def progress_bar(percent: int, width: int = 10) -> str:
     return "▰" * filled + "▱" * (width - filled)
 
 
-def format_feedback(feedback: Feedback) -> str:
+def language_of(user_or_language: dict | str | None) -> str:
+    if isinstance(user_or_language, dict):
+        language = user_or_language.get("interface_language")
+    else:
+        language = user_or_language
+    return "en" if language == "en" else "ru"
+
+
+def label_value(kind: str, value: str | None, language: str) -> str:
+    if not value:
+        return "not set" if language == "en" else "не задано"
+    maps = {
+        "goal": GOAL_LABELS,
+        "topic": TOPIC_LABELS,
+        "correction": CORRECTION_LABELS,
+        "reminder": REMINDER_LABELS,
+        "language": LANGUAGE_LABELS,
+    }
+    return maps[kind][language].get(value, value)
+
+
+def format_feedback(feedback: Feedback, language: str | None = "ru") -> str:
     phrases = "\n".join(
         f"- {item.original} -> {item.improved}" for item in feedback.improved_phrases
     )
     scores = "\n".join(f"- {item.name}: {item.score}/5 - {item.note}" for item in feedback.scores)
+    if language == "en":
+        return (
+            "🧾 Session feedback\n"
+            "━━━━━━━━━━━━\n\n"
+            f"📌 Summary: {feedback.summary}\n\n"
+            f"✅ Main strength: {feedback.main_strength}\n\n"
+            f"🎯 Main issue: {feedback.main_issue}\n\n"
+            "💬 Better phrases:\n"
+            f"{phrases}\n\n"
+            f"🏠 Micro-homework: {feedback.micro_homework}\n\n"
+            f"🏆 Estimated CEFR: {feedback.estimated_cefr}\n\n"
+            "📊 Scores:\n"
+            f"{scores}"
+        )
     return (
         "🧾 Разбор сессии\n"
         "━━━━━━━━━━━━\n\n"
@@ -30,13 +140,28 @@ def format_feedback(feedback: Feedback) -> str:
 
 
 def format_profile(user: dict, progress: dict) -> str:
+    language = language_of(user)
     completed = progress["completed_count"]
-    display_name = user.get("first_name") or user.get("username") or "Пользователь"
+    display_name = user.get("first_name") or user.get("username") or (
+        "User" if language == "en" else "Пользователь"
+    )
     level = user.get("english_level") or "Not set"
-    goal = user.get("goal") or "not set"
-    topics = ", ".join(user.get("topics") or []) or "not set"
+    goal = label_value("goal", user.get("goal"), language)
+    topics = ", ".join(
+        label_value("topic", topic, language) for topic in user.get("topics", [])
+    ) or ("not set" if language == "en" else "не задано")
 
     if completed == 0:
+        if language == "en":
+            return (
+                f"👤 {display_name}\n\n"
+                f"🏆 Level: {level}\n"
+                "🔥 Sessions: 0\n"
+                f"📈 Progress: {progress_bar(0)} 0%\n\n"
+                f"🎯 Goal: {goal}\n"
+                f"📚 Topics: {topics}\n\n"
+                "🚀 Start your first practice so dialogum can collect stats."
+            )
         return (
             f"👤 {display_name}\n\n"
             f"🏆 Уровень: {level}\n"
@@ -51,6 +176,16 @@ def format_profile(user: dict, progress: dict) -> str:
     cefr = feedback.get("estimated_cefr", "unknown")
     summary = progress.get("last_summary") or "No summary saved."
     percent = min(100, completed * 7)
+    if language == "en":
+        return (
+            f"👤 {display_name}\n\n"
+            f"🏆 Level: {cefr}\n"
+            f"🔥 Sessions: {completed}\n"
+            f"📈 To next level: {progress_bar(percent)} {percent}%\n\n"
+            f"🎯 Goal: {goal}\n"
+            f"📚 Topics: {topics}\n\n"
+            f"🧾 Last session: {summary}"
+        )
     return (
         f"👤 {display_name}\n\n"
         f"🏆 Уровень: {cefr}\n"
@@ -63,20 +198,46 @@ def format_profile(user: dict, progress: dict) -> str:
 
 
 def format_settings(user: dict) -> str:
-    topics = ", ".join(user.get("topics") or []) or "not set"
+    language = language_of(user)
+    topics = ", ".join(
+        label_value("topic", topic, language) for topic in user.get("topics", [])
+    ) or ("not set" if language == "en" else "не задано")
+    if language == "en":
+        return (
+            "⚙️ Settings\n"
+            "━━━━━━━━━━━━\n\n"
+            f"🏆 Level: {user.get('english_level') or 'not set'}\n"
+            f"🎯 Goal: {label_value('goal', user.get('goal'), language)}\n"
+            f"📚 Topics: {topics}\n"
+            f"🧾 Corrections: {label_value('correction', user.get('correction_style'), language)}\n"
+            f"🔔 Reminder: {label_value('reminder', user.get('reminder_time'), language)}\n"
+            f"🌐 Interface: {label_value('language', user.get('interface_language'), language)}\n\n"
+            "Choose what you want to change:"
+        )
     return (
         "⚙️ Настройки\n"
         "━━━━━━━━━━━━\n\n"
         f"🏆 Уровень: {user.get('english_level') or 'not set'}\n"
-        f"🎯 Цель: {user.get('goal') or 'not set'}\n"
+        f"🎯 Цель: {label_value('goal', user.get('goal'), language)}\n"
         f"📚 Темы: {topics}\n"
-        f"🧾 Исправления: {user.get('correction_style') or 'not set'}\n"
-        f"🔔 Напоминание: {user.get('reminder_time') or 'not set'}\n"
-        f"🌐 Интерфейс: {user.get('interface_language') or 'not set'}"
+        f"🧾 Исправления: {label_value('correction', user.get('correction_style'), language)}\n"
+        f"🔔 Напоминание: {label_value('reminder', user.get('reminder_time'), language)}\n"
+        f"🌐 Интерфейс: {label_value('language', user.get('interface_language'), language)}\n\n"
+        "Выбери, что хочешь изменить:"
     )
 
 
-def format_help() -> str:
+def format_help(language: str | None = "ru") -> str:
+    if language == "en":
+        return (
+            "📖 What can dialogum do?\n"
+            "━━━━━━━━━━━━\n\n"
+            "🎙 Gives you a short English speaking task.\n"
+            "💬 Leads a short dialogue with follow-up questions.\n"
+            "🧾 Shows mistakes and better phrases after the session.\n"
+            "🧠 Remembers your goals, topics, and recurring weak spots.\n\n"
+            "Format: 10 minutes a day, voice or text."
+        )
     return (
         "📖 Что умеет dialogum?\n"
         "━━━━━━━━━━━━\n\n"

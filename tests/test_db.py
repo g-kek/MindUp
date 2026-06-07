@@ -46,3 +46,37 @@ async def test_user_onboarding_and_session_flow(tmp_path: Path) -> None:
     messages = await db.get_session_messages(session_id)
     assert [message["role"] for message in messages] == ["tutor", "user"]
 
+
+@pytest.mark.asyncio
+async def test_update_user_settings_does_not_restart_onboarding(tmp_path: Path) -> None:
+    db = Database(tmp_path / "mindup.sqlite3")
+    await db.init()
+    await db.upsert_user(telegram_id=1, chat_id=10, username="u", first_name="User")
+    await db.complete_onboarding(
+        1,
+        {
+            "english_level": "B1",
+            "goal": "work",
+            "topics": ["technology"],
+            "correction_style": "soft",
+            "reminder_time": "morning",
+            "interface_language": "ru",
+        },
+    )
+
+    await db.update_user_settings(
+        1,
+        {
+            "interface_language": "en",
+            "topics": ["technology", "business"],
+            "reminder_time": "none",
+        },
+    )
+
+    user = await db.get_user(1)
+
+    assert user is not None
+    assert user["interface_language"] == "en"
+    assert user["topics"] == ["technology", "business"]
+    assert user["reminder_time"] == "none"
+    assert user["onboarding_completed"] is True

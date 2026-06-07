@@ -1,4 +1,4 @@
-# MindUp
+# dialogum
 
 Telegram-бот для ежедневной 10-15 минутной практики английского через голос,
 диалог и персонализированную обратную связь.
@@ -16,7 +16,8 @@ Telegram-бот для ежедневной 10-15 минутной практи�
 - Голос пользователя: Telegram voice -> Gemini audio transcription.
 - Голос бота: text -> `edge-tts` MP3 -> Telegram `send_voice`.
 - SQLite-память: профиль, текущая сессия, сообщения, memory summaries, последние темы.
-- Заготовки меню: progress, settings, subscription.
+- Меню: practice, profile, settings, help.
+- Оплата и реферальная программа в MVP скрыты и не подключены.
 
 ## Быстрый старт
 

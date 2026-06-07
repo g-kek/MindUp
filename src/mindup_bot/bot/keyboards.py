@@ -3,69 +3,73 @@ from __future__ import annotations
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 
 
+START_PRACTICE_LABEL = "🚀 Начать практику"
+PROFILE_LABEL = "📊 Мой профиль"
+SETTINGS_LABEL = "⚙️ Настройки"
+HELP_LABEL = "❓ Помощь"
+FINISH_LABEL = "✅ Завершить"
+MENU_LABEL = "🏠 Меню"
+
+
 LEVEL_OPTIONS = [
     ("A2", "A2"),
     ("B1", "B1"),
     ("B1+", "B1+"),
     ("B2", "B2"),
-    ("Not sure", "not_sure"),
+    ("Не уверен", "not_sure"),
 ]
 
 GOAL_OPTIONS = [
-    ("Work", "work"),
-    ("Travel", "travel"),
-    ("Study", "study"),
-    ("Interviews", "interviews"),
-    ("Speaking confidence", "speaking_confidence"),
-    ("Thinking and self-expression", "thinking_self_expression"),
+    ("💼 Работа", "work"),
+    ("🌍 Путешествия", "travel"),
+    ("🎓 Учеба", "study"),
+    ("🎙 Собеседования", "interviews"),
+    ("🗣 Уверенность в речи", "speaking_confidence"),
+    ("🧠 Мышление и самовыражение", "thinking_self_expression"),
 ]
 
 TOPIC_OPTIONS = [
-    ("Work and career", "work_career"),
-    ("Psychology", "psychology"),
-    ("Technology", "technology"),
-    ("Culture and media", "culture_media"),
-    ("Everyday life", "everyday_life"),
-    ("Business", "business"),
-    ("Society", "society"),
-    ("Random smart topics", "random_smart_topics"),
+    ("💼 Работа и карьера", "work_career"),
+    ("🧠 Психология", "psychology"),
+    ("💻 Технологии", "technology"),
+    ("🎬 Культура и медиа", "culture_media"),
+    ("🏙 Повседневная жизнь", "everyday_life"),
+    ("📈 Бизнес", "business"),
+    ("🌐 Общество", "society"),
+    ("🎲 Умные случайные темы", "random_smart_topics"),
 ]
 
 CORRECTION_OPTIONS = [
-    ("Soft corrections", "soft"),
-    ("Direct corrections", "direct"),
-    ("Only after the session", "after_session"),
+    ("🌱 Мягкие исправления", "soft"),
+    ("🎯 Прямые исправления", "direct"),
+    ("🧾 Только после сессии", "after_session"),
 ]
 
 REMINDER_OPTIONS = [
-    ("Morning", "morning"),
-    ("Afternoon", "afternoon"),
-    ("Evening", "evening"),
-    ("No reminders", "none"),
+    ("🌅 Утром", "morning"),
+    ("☀️ Днем", "afternoon"),
+    ("🌙 Вечером", "evening"),
+    ("🔕 Без напоминаний", "none"),
 ]
 
 LANGUAGE_OPTIONS = [
-    ("Russian", "ru"),
-    ("English", "en"),
+    ("🇷🇺 Русский", "ru"),
+    ("🇬🇧 English", "en"),
 ]
 
 
-def main_menu(language: str | None = "ru") -> InlineKeyboardMarkup:
+def main_menu(language: str | None = "ru") -> ReplyKeyboardMarkup:
     if language == "en":
         buttons = [
-            [InlineKeyboardButton("Start today's practice", callback_data="menu:practice")],
-            [InlineKeyboardButton("My progress", callback_data="menu:progress")],
-            [InlineKeyboardButton("Settings", callback_data="menu:settings")],
-            [InlineKeyboardButton("Subscription", callback_data="menu:subscription")],
+            ["🚀 Start practice", "📊 My profile"],
+            ["⚙️ Settings", "❓ Help"],
         ]
     else:
         buttons = [
-            [InlineKeyboardButton("Start today's practice", callback_data="menu:practice")],
-            [InlineKeyboardButton("My progress", callback_data="menu:progress")],
-            [InlineKeyboardButton("Settings", callback_data="menu:settings")],
-            [InlineKeyboardButton("Subscription", callback_data="menu:subscription")],
+            [START_PRACTICE_LABEL, PROFILE_LABEL],
+            [SETTINGS_LABEL, HELP_LABEL],
         ]
-    return InlineKeyboardMarkup(buttons)
+    return ReplyKeyboardMarkup(buttons, resize_keyboard=True, input_field_placeholder="Выбери действие")
 
 
 def option_keyboard(step: str, options: list[tuple[str, str]]) -> InlineKeyboardMarkup:
@@ -78,16 +82,15 @@ def topics_keyboard(selected: list[str]) -> InlineKeyboardMarkup:
     rows = []
     selected_set = set(selected)
     for label, value in TOPIC_OPTIONS:
-        prefix = "[x]" if value in selected_set else "[ ]"
+        prefix = "✅" if value in selected_set else "▫️"
         rows.append([InlineKeyboardButton(f"{prefix} {label}", callback_data=f"onb:topics:{value}")])
-    rows.append([InlineKeyboardButton("Done", callback_data="onb:topics_done:done")])
+    rows.append([InlineKeyboardButton("Готово", callback_data="onb:topics_done:done")])
     return InlineKeyboardMarkup(rows)
 
 
 def practice_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [["/finish", "/menu"]],
+        [[FINISH_LABEL, MENU_LABEL]],
         resize_keyboard=True,
-        input_field_placeholder="Send a voice message or type in English",
+        input_field_placeholder="Отправь voice или напиши ответ",
     )
-

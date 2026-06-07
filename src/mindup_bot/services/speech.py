@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import uuid
 from pathlib import Path
 
@@ -42,8 +43,33 @@ class TextToSpeech:
 
     async def synthesize(self, text: str) -> Path:
         self._audio_dir.mkdir(parents=True, exist_ok=True)
-        output_path = self._audio_dir / f"tts-{uuid.uuid4().hex}.mp3"
+        file_id = uuid.uuid4().hex
+        mp3_path = self._audio_dir / f"tts-{file_id}.mp3"
+        output_path = self._audio_dir / f"tts-{file_id}.ogg"
         communicate = edge_tts.Communicate(text, voice=self._voice, rate=self._rate)
-        await communicate.save(str(output_path))
-        return output_path
+        await communicate.save(str(mp3_path))
 
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg is None:
+            return mp3_path
+
+        process = await asyncio.create_subprocess_exec(
+            ffmpeg,
+            "-y",
+            "-i",
+            str(mp3_path),
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "32k",
+            "-vbr",
+            "on",
+            str(output_path),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await process.communicate()
+        if process.returncode != 0:
+            return mp3_path
+        mp3_path.unlink(missing_ok=True)
+        return output_path

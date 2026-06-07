@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from telegram import Update
-from telegram.ext import Application, ApplicationBuilder
+from telegram.ext import Application, ApplicationBuilder, ContextTypes
 
 from mindup_bot.ai.gemini import GeminiGateway
 from mindup_bot.ai.roles import Evaluator, MemoryUpdater, TopicSelector, Tutor
@@ -18,7 +18,26 @@ async def post_init(application: Application) -> None:
     db: Database = application.bot_data["db"]
     settings = application.bot_data["settings"]
     await db.init()
+    try:
+        await application.bot.set_my_name("dialogum")
+        await application.bot.set_my_short_description("Ежедневная голосовая практика английского")
+        await application.bot.set_my_description(
+            "dialogum помогает 10 минут в день думать и говорить на английском: "
+            "voice-практика, короткий диалог и персональный разбор."
+        )
+    except Exception:
+        logging.getLogger(__name__).exception("Failed to update Telegram bot profile")
     await schedule_existing_reminders(application, db, settings.app_timezone)
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    error = context.error
+    exc_info = (type(error), error, error.__traceback__) if error else None
+    logging.getLogger(__name__).exception(
+        "Telegram update failed: %s",
+        update,
+        exc_info=exc_info,
+    )
 
 
 def build_application() -> Application:
@@ -46,6 +65,7 @@ def build_application() -> Application:
         }
     )
     register_handlers(application)
+    application.add_error_handler(error_handler)
     return application
 
 
@@ -60,4 +80,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

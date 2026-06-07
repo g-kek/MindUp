@@ -25,7 +25,6 @@ def test_format_feedback_contains_core_sections() -> None:
 
     text = format_feedback(feedback)
 
-    assert "Session feedback" in text
-    assert "Estimated CEFR: B1" in text
+    assert "🧾 Разбор сессии" in text
+    assert "🏆 Estimated CEFR: B1" in text
     assert "I think it good -> I think it is useful." in text
-

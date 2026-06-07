@@ -220,11 +220,19 @@ async def handle_onboarding_callback(
         if completed_user:
             settings_obj: Settings = context.application.bot_data["settings"]
             schedule_user_reminder(context.application, completed_user, settings_obj.app_timezone)
-        done_text = (
-            "Done. Your profile is saved. You can start your first free session."
-            if data.get("interface_language") == "en"
-            else "Готово. Профиль сохранен. Можем провести первую бесплатную сессию."
-        )
+            progress_data = await db.get_progress(completed_user["telegram_id"])
+            header = (
+                "✅ Setup complete. Here is your profile:\n\n"
+                if completed_user.get("interface_language") == "en"
+                else "✅ Настройка завершена. Вот твой профиль:\n\n"
+            )
+            await update.callback_query.message.reply_text(
+                header + format_profile(completed_user, progress_data),
+                reply_markup=main_menu(completed_user.get("interface_language")),
+            )
+            return
+
+        done_text = "Готово. Профиль сохранен. Можем провести первую бесплатную сессию."
         await update.callback_query.message.reply_text(
             done_text,
             reply_markup=main_menu(data.get("interface_language")),

@@ -250,6 +250,26 @@ async def handle_settings_callback(
     language = user.get("interface_language")
     parts = callback_data.split(":")
 
+    if len(parts) >= 2 and parts[1] == "back":
+        fresh_user = await db.get_user(user["telegram_id"])
+        if fresh_user is None:
+            return
+        await edit_callback_message(
+            query,
+            format_settings(fresh_user),
+            reply_markup=settings_keyboard(fresh_user.get("interface_language")),
+        )
+        return
+
+    if len(parts) >= 2 and parts[1] == "close":
+        text = (
+            "🏠 dialogum menu\n\nUse the keyboard below to choose an action."
+            if language == "en"
+            else "🏠 Меню dialogum\n\nВыбери действие на клавиатуре ниже."
+        )
+        await edit_callback_message(query, text, reply_markup=None)
+        return
+
     if len(parts) >= 3 and parts[1] == "edit":
         field = parts[2]
         if field == "topics":
@@ -278,7 +298,7 @@ async def handle_settings_callback(
         await edit_callback_message(
             query,
             prompt_en if language == "en" else prompt_ru,
-            reply_markup=settings_option_keyboard(field, settings_options_for(field, language)),
+            reply_markup=settings_option_keyboard(field, settings_options_for(field, language), language),
         )
         return
 

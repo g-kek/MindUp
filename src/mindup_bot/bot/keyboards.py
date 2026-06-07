@@ -137,6 +137,7 @@ def settings_keyboard(language: str | None = "ru") -> InlineKeyboardMarkup:
             [InlineKeyboardButton("🧾 Corrections", callback_data="settings:edit:correction_style")],
             [InlineKeyboardButton("🔔 Reminder", callback_data="settings:edit:reminder_time")],
             [InlineKeyboardButton("🌐 Interface language", callback_data="settings:edit:interface_language")],
+            [InlineKeyboardButton("⬅️ Back to menu", callback_data="settings:close")],
         ]
     else:
         buttons = [
@@ -146,17 +147,23 @@ def settings_keyboard(language: str | None = "ru") -> InlineKeyboardMarkup:
             [InlineKeyboardButton("🧾 Исправления", callback_data="settings:edit:correction_style")],
             [InlineKeyboardButton("🔔 Напоминание", callback_data="settings:edit:reminder_time")],
             [InlineKeyboardButton("🌐 Язык интерфейса", callback_data="settings:edit:interface_language")],
+            [InlineKeyboardButton("⬅️ Назад в меню", callback_data="settings:close")],
         ]
     return InlineKeyboardMarkup(buttons)
 
 
-def settings_option_keyboard(field: str, options: list[tuple[str, str]]) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton(label, callback_data=f"settings:set:{field}:{value}")]
-            for label, value in options
-        ]
-    )
+def settings_option_keyboard(
+    field: str,
+    options: list[tuple[str, str]],
+    language: str | None = "ru",
+) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(label, callback_data=f"settings:set:{field}:{value}")]
+        for label, value in options
+    ]
+    back_label = "⬅️ Back" if language == "en" else "⬅️ Назад"
+    rows.append([InlineKeyboardButton(back_label, callback_data="settings:back")])
+    return InlineKeyboardMarkup(rows)
 
 
 def settings_options_for(field: str, language: str | None = "ru") -> list[tuple[str, str]]:
@@ -188,6 +195,9 @@ def topics_keyboard(
     done_callback = "settings:topics_done:done" if mode == "settings" else "onb:topics_done:done"
     done_label = "Done" if language == "en" else "Готово"
     rows.append([InlineKeyboardButton(done_label, callback_data=done_callback)])
+    if mode == "settings":
+        back_label = "⬅️ Back" if language == "en" else "⬅️ Назад"
+        rows.append([InlineKeyboardButton(back_label, callback_data="settings:back")])
     return InlineKeyboardMarkup(rows)
 
 

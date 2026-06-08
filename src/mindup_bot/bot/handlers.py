@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from typing import Any
 
 from telegram import Update
@@ -34,12 +35,15 @@ from mindup_bot.bot.formatters import (
     format_profile,
     format_progress_insight,
     format_settings,
+    format_streak,
     format_vocabulary,
 )
 from mindup_bot.bot.keyboards import (
     CORRECTION_OPTIONS,
     CUSTOM_TOPIC_LABEL,
     CUSTOM_TOPIC_LABEL_EN,
+    FEEDBACK_LABEL,
+    FEEDBACK_LABEL_EN,
     FINISH_LABEL,
     FINISH_LABEL_EN,
     GOAL_OPTIONS,
@@ -56,8 +60,13 @@ from mindup_bot.bot.keyboards import (
     SETTINGS_LABEL_EN,
     START_PRACTICE_LABEL,
     START_PRACTICE_LABEL_EN,
+    SUPPORT_LABEL,
+    SUPPORT_LABEL_EN,
     VOCABULARY_LABEL,
     VOCABULARY_LABEL_EN,
+    VOCABULARY_REVIEW_LABEL,
+    VOCABULARY_REVIEW_LABEL_EN,
+    first_session_keyboard,
     main_menu,
     option_keyboard,
     practice_message_keyboard,
@@ -91,6 +100,9 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("progress", progress))
     application.add_handler(CommandHandler("topic", custom_topic))
     application.add_handler(CommandHandler("vocabulary", vocabulary))
+    application.add_handler(CommandHandler("review", vocabulary_review))
+    application.add_handler(CommandHandler("support", support))
+    application.add_handler(CommandHandler("feedback", feedback))
     application.add_handler(CommandHandler("settings", settings))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CallbackQueryHandler(handle_callback))
@@ -208,6 +220,59 @@ async def vocabulary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+async def vocabulary_review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = await ensure_user(update, context)
+    language = user.get("interface_language")
+    db: Database = context.application.bot_data["db"]
+    item = await db.get_vocabulary_review_item(user["telegram_id"])
+    if item is None:
+        message = (
+            "No saved phrases yet. Finish a practice session first."
+            if language == "en"
+            else "Пока нет сохраненных фраз. Сначала заверши практику."
+        )
+        await update.effective_message.reply_text(message, reply_markup=main_menu(language))
+        return
+
+    await db.set_pending_action(user["telegram_id"], "vocab_review", item["id"])
+    clue = item.get("translation") or item.get("note") or (
+        "your saved phrase" if language == "en" else "твоя сохраненная фраза"
+    )
+    if language == "en":
+        message = (
+            "🔁 Vocabulary review\n\n"
+            f"Write this phrase in English:\n{clue}"
+        )
+    else:
+        message = (
+            "🔁 Повторение словаря\n\n"
+            f"Напиши эту фразу на английском:\n{clue}"
+        )
+    await update.effective_message.reply_text(message, reply_markup=main_menu(language))
+
+
+async def support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = await ensure_user(update, context)
+    db: Database = context.application.bot_data["db"]
+    await db.set_pending_action(user["telegram_id"], "support")
+    if user.get("interface_language") == "en":
+        message = "Write your support request in one message. We will contact you."
+    else:
+        message = "Напиши обращение в поддержку одним сообщением. Мы с тобой свяжемся."
+    await update.effective_message.reply_text(message, reply_markup=main_menu(user.get("interface_language")))
+
+
+async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = await ensure_user(update, context)
+    db: Database = context.application.bot_data["db"]
+    await db.set_pending_action(user["telegram_id"], "feedback")
+    if user.get("interface_language") == "en":
+        message = "Write your feedback in one message."
+    else:
+        message = "Напиши feedback одним сообщением."
+    await update.effective_message.reply_text(message, reply_markup=main_menu(user.get("interface_language")))
+
+
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = await ensure_user(update, context)
     await update.effective_message.reply_text(
@@ -260,6 +325,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await help_command(update, context)
         return
 
+    if data.startswith("welcome:"):
+        await handle_welcome_callback(update, context, user, data)
+        return
+
     if data.startswith("practice:"):
         await handle_practice_callback(update, context, user, data)
         return
@@ -270,6 +339,23 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data.startswith("settings:"):
         await handle_settings_callback(update, context, user, data)
+
+
+async def handle_welcome_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user: dict[str, Any],
+    callback_data: str,
+) -> None:
+    query = update.callback_query
+    if query is None:
+        return
+    await query.answer()
+    action = callback_data.split(":", 1)[1]
+    if action == "practice":
+        await start_practice(update, context, user)
+    elif action == "custom_topic":
+        await custom_topic(update, context)
 
 
 async def handle_practice_callback(
@@ -385,6 +471,14 @@ async def handle_onboarding_callback(
             await update.callback_query.message.reply_text(
                 header + format_profile(completed_user, progress_data),
                 reply_markup=main_menu(completed_user.get("interface_language")),
+            )
+            if completed_user.get("interface_language") == "en":
+                prompt = "Ready for your first speaking session?"
+            else:
+                prompt = "Готов начать первую speaking-сессию?"
+            await update.callback_query.message.reply_text(
+                prompt,
+                reply_markup=first_session_keyboard(completed_user.get("interface_language")),
             )
             return
 
@@ -704,6 +798,119 @@ async def start_custom_topic_session(
     )
 
 
+async def handle_pending_text(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user: dict[str, Any],
+    text: str,
+) -> bool:
+    action = user.get("pending_action") or (
+        "custom_topic" if user.get("custom_topic_pending") else None
+    )
+    if action is None:
+        return False
+
+    db: Database = context.application.bot_data["db"]
+    language = user.get("interface_language")
+
+    if action == "custom_topic":
+        await db.set_pending_action(user["telegram_id"], None)
+        await start_custom_topic_session(update, context, user, text)
+        return True
+
+    if action == "vocab_review":
+        await handle_vocabulary_review_answer(update, context, user, text)
+        return True
+
+    if action in {"support", "feedback"}:
+        await handle_contact_message(update, context, user, action, text)
+        return True
+
+    logger.warning("Unknown pending action for user %s: %s", user["telegram_id"], action)
+    await db.set_pending_action(user["telegram_id"], None)
+    message = "Please try again." if language == "en" else "Попробуй еще раз."
+    await update.effective_message.reply_text(message, reply_markup=main_menu(language))
+    return True
+
+
+async def handle_vocabulary_review_answer(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user: dict[str, Any],
+    answer: str,
+) -> None:
+    db: Database = context.application.bot_data["db"]
+    language = user.get("interface_language")
+    item_id = user.get("review_item_id")
+    await db.set_pending_action(user["telegram_id"], None)
+    if item_id is None:
+        message = "Review item was not found." if language == "en" else "Фраза для повторения не найдена."
+        await update.effective_message.reply_text(message, reply_markup=main_menu(language))
+        return
+
+    item = await db.get_vocabulary_item(user["telegram_id"], int(item_id))
+    if item is None:
+        message = "Review item was not found." if language == "en" else "Фраза для повторения не найдена."
+        await update.effective_message.reply_text(message, reply_markup=main_menu(language))
+        return
+
+    expected = str(item.get("phrase") or "").strip()
+    score = SequenceMatcher(None, _normalize_answer(answer), _normalize_answer(expected)).ratio()
+    await db.mark_vocabulary_reviewed(user["telegram_id"], item["id"])
+    if score >= 0.82:
+        if language == "en":
+            message = f"✅ Correct.\n\n{expected}"
+        else:
+            message = f"✅ Верно.\n\n{expected}"
+    else:
+        if language == "en":
+            message = f"Almost. The phrase was:\n\n{expected}"
+        else:
+            message = f"Почти. Правильная фраза:\n\n{expected}"
+    await update.effective_message.reply_text(message, reply_markup=main_menu(language))
+
+
+async def handle_contact_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user: dict[str, Any],
+    kind: str,
+    message_text: str,
+) -> None:
+    db: Database = context.application.bot_data["db"]
+    settings_obj: Settings = context.application.bot_data["settings"]
+    language = user.get("interface_language")
+    await db.set_pending_action(user["telegram_id"], None)
+    target_chat_id = _contact_chat_id(settings_obj, kind)
+    await db.add_contact_message(
+        user=user,
+        kind=kind,
+        message=message_text,
+        forwarded_chat_id=target_chat_id,
+    )
+
+    if target_chat_id:
+        try:
+            await context.bot.send_message(
+                chat_id=target_chat_id,
+                text=_format_contact_forward(user, kind, message_text),
+            )
+        except Exception:
+            logger.exception("Failed to forward %s message to chat %s", kind, target_chat_id)
+    else:
+        logger.warning("%s chat id is not configured; message was only saved to DB", kind)
+
+    if kind == "support":
+        response = (
+            "Thanks. We received your request and will contact you."
+            if language == "en"
+            else "Спасибо. Мы получили обращение и свяжемся с тобой."
+        )
+    else:
+        response = "Thanks for the feedback." if language == "en" else "Спасибо за feedback."
+    await update.effective_message.reply_text(response, reply_markup=main_menu(language))
+
+
 async def handle_practice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_message is None:
         return
@@ -715,6 +922,16 @@ async def handle_practice_message(update: Update, context: ContextTypes.DEFAULT_
         text = update.effective_message.text.strip()
         if await handle_menu_text(update, context, user, text):
             return
+        if await handle_pending_text(update, context, user, text):
+            return
+    elif user.get("pending_action"):
+        message = (
+            "Please send text for this action."
+            if user.get("interface_language") == "en"
+            else "Для этого действия отправь текст."
+        )
+        await update.effective_message.reply_text(message)
+        return
 
     if not user["onboarding_completed"]:
         message = "For now, answer with onboarding buttons." if user.get("interface_language") == "en" else (
@@ -724,12 +941,6 @@ async def handle_practice_message(update: Update, context: ContextTypes.DEFAULT_
         return
 
     db: Database = context.application.bot_data["db"]
-    if update.effective_message.text and user.get("custom_topic_pending"):
-        requested_topic = update.effective_message.text.strip()
-        await db.set_custom_topic_pending(user["telegram_id"], False)
-        await start_custom_topic_session(update, context, user, requested_topic)
-        return
-
     session = await db.get_active_session(user["telegram_id"])
     if not session:
         message = "Start a practice session first." if user.get("interface_language") == "en" else (
@@ -911,6 +1122,11 @@ async def finish_session(
         format_feedback(feedback, user.get("interface_language")),
         reply_markup=main_menu(user.get("interface_language")),
     )
+    progress_data = await db.get_progress(user["telegram_id"])
+    await update.effective_message.reply_text(
+        format_streak(progress_data, language),
+        reply_markup=main_menu(user.get("interface_language")),
+    )
 
 
 async def send_text_and_voice(
@@ -959,6 +1175,34 @@ async def handle_menu_text(
     text: str,
 ) -> bool:
     normalized = text.strip()
+    menu_labels = {
+        START_PRACTICE_LABEL,
+        START_PRACTICE_LABEL_EN,
+        PROFILE_LABEL,
+        PROFILE_LABEL_EN,
+        CUSTOM_TOPIC_LABEL,
+        CUSTOM_TOPIC_LABEL_EN,
+        VOCABULARY_LABEL,
+        VOCABULARY_LABEL_EN,
+        VOCABULARY_REVIEW_LABEL,
+        VOCABULARY_REVIEW_LABEL_EN,
+        SUPPORT_LABEL,
+        SUPPORT_LABEL_EN,
+        FEEDBACK_LABEL,
+        FEEDBACK_LABEL_EN,
+        SETTINGS_LABEL,
+        SETTINGS_LABEL_EN,
+        HELP_LABEL,
+        HELP_LABEL_EN,
+        MENU_LABEL,
+        MENU_LABEL_EN,
+        FINISH_LABEL,
+        FINISH_LABEL_EN,
+    }
+    if normalized in menu_labels:
+        db: Database = context.application.bot_data["db"]
+        await db.set_pending_action(user["telegram_id"], None)
+
     if normalized in {START_PRACTICE_LABEL, START_PRACTICE_LABEL_EN}:
         await start_practice(update, context, user)
         return True
@@ -970,6 +1214,15 @@ async def handle_menu_text(
         return True
     if normalized in {VOCABULARY_LABEL, VOCABULARY_LABEL_EN}:
         await vocabulary(update, context)
+        return True
+    if normalized in {VOCABULARY_REVIEW_LABEL, VOCABULARY_REVIEW_LABEL_EN}:
+        await vocabulary_review(update, context)
+        return True
+    if normalized in {SUPPORT_LABEL, SUPPORT_LABEL_EN}:
+        await support(update, context)
+        return True
+    if normalized in {FEEDBACK_LABEL, FEEDBACK_LABEL_EN}:
+        await feedback(update, context)
         return True
     if normalized in {SETTINGS_LABEL, SETTINGS_LABEL_EN}:
         await settings(update, context)
@@ -1123,3 +1376,30 @@ def fallback_vocabulary_from_feedback(feedback: Feedback, language: str) -> list
         for phrase in feedback.improved_phrases
         if phrase.improved
     ]
+
+
+def _normalize_answer(value: str) -> str:
+    return " ".join(value.lower().strip().split())
+
+
+def _contact_chat_id(settings: Settings, kind: str) -> str | None:
+    if kind == "feedback" and settings.feedback_chat_id.strip():
+        return settings.feedback_chat_id.strip()
+    if settings.support_chat_id.strip():
+        return settings.support_chat_id.strip()
+    return None
+
+
+def _format_contact_forward(user: dict[str, Any], kind: str, message: str) -> str:
+    username = user.get("username")
+    first_name = user.get("first_name") or "unknown"
+    handle = f"@{username}" if username else "no username"
+    title = "Support request" if kind == "support" else "Product feedback"
+    return (
+        f"{title}\n"
+        "━━━━━━━━━━━━\n"
+        f"User ID: {user['telegram_id']}\n"
+        f"Name: {first_name}\n"
+        f"Username: {handle}\n\n"
+        f"Message:\n{message}"
+    )

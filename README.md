@@ -21,6 +21,9 @@ Telegram-бот для ежедневной 10-15 минутной практи�
 - Перевод tutor-текста по inline-кнопке под сообщением.
 - Анализ прогресса по последним сессиям и последним 24 часам.
 - Словарь изученных фраз с сохранением после разбора сессии.
+- Повторение словаря через короткий translate-back quiz.
+- Daily streak по завершенным практикам.
+- Support и feedback формы с пересылкой в Telegram-группы.
 - Разбор сессии выводится на языке интерфейса пользователя.
 - Голос бота выбирается в настройках.
 - Оплата и реферальная программа в MVP скрыты и не подключены.
@@ -49,6 +52,15 @@ GEMINI_FALLBACK_MODELS=gemini-2.5-flash-lite
 GEMINI_STT_FALLBACK_MODELS=gemini-2.5-flash-lite
 ```
 
+Для support/feedback можно указать Telegram chat id групп:
+
+```bash
+SUPPORT_CHAT_ID=-100...
+FEEDBACK_CHAT_ID=-100...
+```
+
+Если `FEEDBACK_CHAT_ID` не задан, feedback отправляется в `SUPPORT_CHAT_ID`.
+
 Запуск:
 
 ```bash
@@ -66,7 +78,10 @@ python -m mindup_bot.main
 ```bash
 /topic       # задать свою тему
 /vocabulary  # открыть словарь фраз
+/review      # повторить фразу из словаря
 /progress    # профиль и анализ прогресса
+/support     # написать в поддержку
+/feedback    # отправить продуктовый feedback
 ```
 
 ## Docker

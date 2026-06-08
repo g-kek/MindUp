@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -45,6 +46,8 @@ class Database:
                     correction_style TEXT,
                     reminder_time TEXT,
                     custom_topic_pending INTEGER NOT NULL DEFAULT 0,
+                    pending_action TEXT,
+                    review_item_id INTEGER,
                     tts_voice TEXT,
                     onboarding_completed INTEGER NOT NULL DEFAULT 0,
                     onboarding_step TEXT,
@@ -121,6 +124,18 @@ class Database:
                     FOREIGN KEY(user_id) REFERENCES users(telegram_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS contact_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    username TEXT,
+                    first_name TEXT,
+                    message TEXT NOT NULL,
+                    forwarded_chat_id TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(user_id) REFERENCES users(telegram_id)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_sessions_user_status
                     ON sessions(user_id, status, created_at);
                 CREATE INDEX IF NOT EXISTS idx_messages_session
@@ -133,6 +148,8 @@ class Database:
                     ON vocabulary_items(user_id, last_seen_at);
                 CREATE INDEX IF NOT EXISTS idx_progress_reports_user
                     ON progress_reports(user_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_contact_messages_user
+                    ON contact_messages(user_id, created_at);
                 """
             )
             await self._ensure_column(
@@ -141,6 +158,8 @@ class Database:
                 "custom_topic_pending",
                 "INTEGER NOT NULL DEFAULT 0",
             )
+            await self._ensure_column(db, "users", "pending_action", "TEXT")
+            await self._ensure_column(db, "users", "review_item_id", "INTEGER")
             await self._ensure_column(db, "users", "tts_voice", "TEXT")
             await db.commit()
 
@@ -283,6 +302,8 @@ class Database:
             "correction_style",
             "reminder_time",
             "custom_topic_pending",
+            "pending_action",
+            "review_item_id",
             "tts_voice",
         }
         unknown_fields = set(updates) - allowed_fields
@@ -330,9 +351,21 @@ class Database:
             await db.commit()
 
     async def set_custom_topic_pending(self, telegram_id: int, is_pending: bool) -> None:
+        await self.set_pending_action(telegram_id, "custom_topic" if is_pending else None)
+
+    async def set_pending_action(
+        self,
+        telegram_id: int,
+        action: str | None,
+        review_item_id: int | None = None,
+    ) -> None:
         await self.update_user_settings(
             telegram_id,
-            {"custom_topic_pending": 1 if is_pending else 0},
+            {
+                "custom_topic_pending": 1 if action == "custom_topic" else 0,
+                "pending_action": action,
+                "review_item_id": review_item_id,
+            },
         )
 
     async def list_users_with_reminders(self) -> list[dict[str, Any]]:
@@ -569,6 +602,47 @@ class Database:
             )
         return [dict(row) for row in rows]
 
+    async def get_vocabulary_item(self, user_id: int, item_id: int) -> dict[str, Any] | None:
+        async with self.connect() as db:
+            row = await self._fetchone(
+                db,
+                """
+                SELECT *
+                FROM vocabulary_items
+                WHERE user_id = ? AND id = ?
+                """,
+                (user_id, item_id),
+            )
+        return dict(row) if row else None
+
+    async def get_vocabulary_review_item(self, user_id: int) -> dict[str, Any] | None:
+        async with self.connect() as db:
+            row = await self._fetchone(
+                db,
+                """
+                SELECT *
+                FROM vocabulary_items
+                WHERE user_id = ?
+                ORDER BY last_seen_at ASC, id ASC
+                LIMIT 1
+                """,
+                (user_id,),
+            )
+        return dict(row) if row else None
+
+    async def mark_vocabulary_reviewed(self, user_id: int, item_id: int) -> None:
+        async with self.connect() as db:
+            await db.execute(
+                """
+                UPDATE vocabulary_items
+                SET times_seen = times_seen + 1,
+                    last_seen_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND id = ?
+                """,
+                (user_id, item_id),
+            )
+            await db.commit()
+
     async def get_recent_topics(self, user_id: int, limit: int = 8) -> list[dict[str, Any]]:
         async with self.connect() as db:
             rows = await self._fetchall(
@@ -605,12 +679,33 @@ class Database:
                 """,
                 (user_id,),
             )
+            streak_rows = await self._fetchall(
+                db,
+                """
+                SELECT DISTINCT substr(completed_at, 1, 10) AS completed_date
+                FROM sessions
+                WHERE user_id = ?
+                    AND status = 'completed'
+                    AND completed_at IS NOT NULL
+                ORDER BY completed_date DESC
+                LIMIT 60
+                """,
+                (user_id,),
+            )
         last_feedback = _json_loads(last_row["feedback_json"], {}) if last_row else {}
+        streak = _calculate_daily_streak(
+            [
+                row["completed_date"]
+                for row in streak_rows
+                if row["completed_date"]
+            ]
+        )
         return {
             "completed_count": int(count_row["completed_count"] if count_row else 0),
             "last_summary": last_row["summary"] if last_row else None,
             "last_completed_at": last_row["completed_at"] if last_row else None,
             "last_feedback": last_feedback,
+            "streak": streak,
         }
 
     async def get_completed_sessions(self, user_id: int, limit: int = 10) -> list[dict[str, Any]]:
@@ -666,6 +761,39 @@ class Database:
             )
             await db.commit()
 
+    async def add_contact_message(
+        self,
+        *,
+        user: dict[str, Any],
+        kind: str,
+        message: str,
+        forwarded_chat_id: str | None,
+    ) -> int:
+        async with self.connect() as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO contact_messages (
+                    user_id,
+                    kind,
+                    username,
+                    first_name,
+                    message,
+                    forwarded_chat_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user["telegram_id"],
+                    kind,
+                    user.get("username"),
+                    user.get("first_name"),
+                    message,
+                    forwarded_chat_id,
+                ),
+            )
+            await db.commit()
+            return int(cursor.lastrowid)
+
     def _user_from_row(self, row: aiosqlite.Row) -> dict[str, Any]:
         user = dict(row)
         user["topics"] = _json_loads(user.pop("topics_json", "[]"), [])
@@ -678,3 +806,34 @@ class Database:
         session = dict(row)
         session["feedback"] = _json_loads(session.get("feedback_json"), {})
         return session
+
+
+def _calculate_daily_streak(completed_dates: list[str]) -> dict[str, Any]:
+    parsed_dates = sorted(
+        {
+            datetime.strptime(completed_date, "%Y-%m-%d").date()
+            for completed_date in completed_dates
+        },
+        reverse=True,
+    )
+    today = datetime.now(timezone.utc).date()
+    if not parsed_dates:
+        return {
+            "current": 0,
+            "practiced_today": False,
+            "last_practice_date": None,
+        }
+
+    practiced_today = parsed_dates[0] == today
+    cursor = today if practiced_today else today - timedelta(days=1)
+    current = 0
+    date_set: set[date] = set(parsed_dates)
+    while cursor in date_set:
+        current += 1
+        cursor -= timedelta(days=1)
+
+    return {
+        "current": current,
+        "practiced_today": practiced_today,
+        "last_practice_date": parsed_dates[0].isoformat(),
+    }

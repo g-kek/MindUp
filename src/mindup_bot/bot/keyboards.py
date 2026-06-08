@@ -11,6 +11,9 @@ FINISH_LABEL = "✅ Завершить"
 MENU_LABEL = "🏠 Меню"
 CUSTOM_TOPIC_LABEL = "✍️ Своя тема"
 VOCABULARY_LABEL = "📚 Словарь"
+VOCABULARY_REVIEW_LABEL = "🔁 Повторить"
+SUPPORT_LABEL = "🛟 Поддержка"
+FEEDBACK_LABEL = "💬 Feedback"
 
 START_PRACTICE_LABEL_EN = "🚀 Start practice"
 PROFILE_LABEL_EN = "📊 My profile"
@@ -20,6 +23,9 @@ FINISH_LABEL_EN = "✅ Finish"
 MENU_LABEL_EN = "🏠 Menu"
 CUSTOM_TOPIC_LABEL_EN = "✍️ Custom topic"
 VOCABULARY_LABEL_EN = "📚 Vocabulary"
+VOCABULARY_REVIEW_LABEL_EN = "🔁 Review"
+SUPPORT_LABEL_EN = "🛟 Support"
+FEEDBACK_LABEL_EN = "💬 Feedback"
 
 
 LEVEL_OPTIONS = [
@@ -122,14 +128,18 @@ def main_menu(language: str | None = "ru") -> ReplyKeyboardMarkup:
         buttons = [
             [START_PRACTICE_LABEL_EN, PROFILE_LABEL_EN],
             [CUSTOM_TOPIC_LABEL_EN, VOCABULARY_LABEL_EN],
+            [VOCABULARY_REVIEW_LABEL_EN, SUPPORT_LABEL_EN],
             [SETTINGS_LABEL_EN, HELP_LABEL_EN],
+            [FEEDBACK_LABEL_EN],
         ]
         placeholder = "Choose an action"
     else:
         buttons = [
             [START_PRACTICE_LABEL, PROFILE_LABEL],
             [CUSTOM_TOPIC_LABEL, VOCABULARY_LABEL],
+            [VOCABULARY_REVIEW_LABEL, SUPPORT_LABEL],
             [SETTINGS_LABEL, HELP_LABEL],
+            [FEEDBACK_LABEL],
         ]
         placeholder = "Выбери действие"
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True, input_field_placeholder=placeholder)
@@ -254,5 +264,21 @@ def practice_message_keyboard(message_id: int, language: str | None = "ru") -> I
                 InlineKeyboardButton("Завершить", callback_data="practice:finish"),
                 InlineKeyboardButton("Меню", callback_data="practice:menu"),
             ],
+        ]
+    )
+
+
+def first_session_keyboard(language: str | None = "ru") -> InlineKeyboardMarkup:
+    if language == "en":
+        return InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("Start first practice", callback_data="welcome:practice")],
+                [InlineKeyboardButton("Choose custom topic", callback_data="welcome:custom_topic")],
+            ]
+        )
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("Начать первую практику", callback_data="welcome:practice")],
+            [InlineKeyboardButton("Выбрать свою тему", callback_data="welcome:custom_topic")],
         ]
     )

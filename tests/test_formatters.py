@@ -1,6 +1,7 @@
 from mindup_bot.ai.schemas import Feedback, ProgressInsight
 from mindup_bot.bot.formatters import (
     format_feedback,
+    format_profile,
     format_progress_insight,
     format_settings,
     format_vocabulary,
@@ -88,3 +89,23 @@ def test_format_progress_insight_uses_language() -> None:
 
     assert "📈 Анализ прогресса" in text
     assert "Регулярная практика" in text
+
+
+def test_format_profile_includes_daily_streak() -> None:
+    user = {
+        "first_name": "User",
+        "english_level": "B1",
+        "goal": "work",
+        "topics": ["business"],
+        "interface_language": "ru",
+    }
+    progress = {
+        "completed_count": 2,
+        "last_feedback": {"estimated_cefr": "B1"},
+        "last_summary": "Короткая практика.",
+        "streak": {"current": 3, "practiced_today": True},
+    }
+
+    text = format_profile(user, progress)
+
+    assert "🔥 Серия: 3 дн. (сегодня выполнено)" in text

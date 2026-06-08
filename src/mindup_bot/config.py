@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     )
     tts_voice: str = Field(default="en-US-JennyNeural", alias="TTS_VOICE")
     tts_rate: str = Field(default="+0%", alias="TTS_RATE")
+    support_chat_id: str = Field(default="", alias="SUPPORT_CHAT_ID")
+    feedback_chat_id: str = Field(default="", alias="FEEDBACK_CHAT_ID")
 
     min_dialogue_turns: int = Field(default=3, alias="MIN_DIALOGUE_TURNS")
     max_dialogue_turns: int = Field(default=4, alias="MAX_DIALOGUE_TURNS")

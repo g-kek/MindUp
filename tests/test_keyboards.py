@@ -1,4 +1,5 @@
 from mindup_bot.bot.keyboards import (
+    first_session_keyboard,
     main_menu,
     practice_message_keyboard,
     settings_keyboard,
@@ -28,5 +29,15 @@ def test_main_menu_and_practice_message_include_product_actions() -> None:
 
     assert "✍️ Своя тема" in menu_buttons
     assert "📚 Словарь" in menu_buttons
+    assert "🔁 Повторить" in menu_buttons
+    assert "🛟 Поддержка" in menu_buttons
+    assert "💬 Feedback" in menu_buttons
     assert "Перевести" in practice_texts
     assert "Завершить" in practice_texts
+
+
+def test_first_session_keyboard_has_primary_paths() -> None:
+    texts = _button_texts(first_session_keyboard("ru"))
+
+    assert "Начать первую практику" in texts
+    assert "Выбрать свою тему" in texts

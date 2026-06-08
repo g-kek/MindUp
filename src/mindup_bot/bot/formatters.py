@@ -99,6 +99,17 @@ def progress_bar(percent: int, width: int = 10) -> str:
     return "▰" * filled + "▱" * (width - filled)
 
 
+def format_streak(progress: dict, language: str) -> str:
+    streak = progress.get("streak") or {}
+    current = int(streak.get("current") or 0)
+    practiced_today = bool(streak.get("practiced_today"))
+    if language == "en":
+        status = "done today" if practiced_today else "not done today"
+        return f"🔥 Streak: {current} days ({status})"
+    status = "сегодня выполнено" if practiced_today else "сегодня еще нет"
+    return f"🔥 Серия: {current} дн. ({status})"
+
+
 def language_of(user_or_language: dict | str | None) -> str:
     if isinstance(user_or_language, dict):
         language = user_or_language.get("interface_language")
@@ -173,6 +184,7 @@ def format_profile(user: dict, progress: dict) -> str:
                 f"👤 {display_name}\n\n"
                 f"🏆 Level: {level}\n"
                 "🔥 Sessions: 0\n"
+                f"{format_streak(progress, language)}\n"
                 f"📈 Progress: {progress_bar(0)} 0%\n\n"
                 f"🎯 Goal: {goal}\n"
                 f"📚 Topics: {topics}\n\n"
@@ -182,6 +194,7 @@ def format_profile(user: dict, progress: dict) -> str:
             f"👤 {display_name}\n\n"
             f"🏆 Уровень: {level}\n"
             "🔥 Сессий: 0\n"
+            f"{format_streak(progress, language)}\n"
             f"📈 Прогресс: {progress_bar(0)} 0%\n\n"
             f"🎯 Цель: {goal}\n"
             f"📚 Темы: {topics}\n\n"
@@ -197,6 +210,7 @@ def format_profile(user: dict, progress: dict) -> str:
             f"👤 {display_name}\n\n"
             f"🏆 Level: {cefr}\n"
             f"🔥 Sessions: {completed}\n"
+            f"{format_streak(progress, language)}\n"
             f"📈 To next level: {progress_bar(percent)} {percent}%\n\n"
             f"🎯 Goal: {goal}\n"
             f"📚 Topics: {topics}\n\n"
@@ -206,6 +220,7 @@ def format_profile(user: dict, progress: dict) -> str:
         f"👤 {display_name}\n\n"
         f"🏆 Уровень: {cefr}\n"
         f"🔥 Сессий: {completed}\n"
+        f"{format_streak(progress, language)}\n"
         f"📈 До следующего уровня: {progress_bar(percent)} {percent}%\n\n"
         f"🎯 Цель: {goal}\n"
         f"📚 Темы: {topics}\n\n"

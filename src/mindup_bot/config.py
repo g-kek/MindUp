@@ -15,6 +15,14 @@ class Settings(BaseSettings):
 
     gemini_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_MODEL")
     gemini_stt_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_STT_MODEL")
+    gemini_fallback_models: str = Field(
+        default="gemini-2.5-flash-lite",
+        alias="GEMINI_FALLBACK_MODELS",
+    )
+    gemini_stt_fallback_models: str = Field(
+        default="gemini-2.5-flash-lite",
+        alias="GEMINI_STT_FALLBACK_MODELS",
+    )
     tts_voice: str = Field(default="en-US-JennyNeural", alias="TTS_VOICE")
     tts_rate: str = Field(default="+0%", alias="TTS_RATE")
 
@@ -33,4 +41,3 @@ def get_settings() -> Settings:
     settings = Settings()
     settings.ensure_runtime_dirs()
     return settings
-

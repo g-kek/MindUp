@@ -35,6 +35,14 @@ TELEGRAM_BOT_TOKEN=...
 GEMINI_API_KEY=...
 ```
 
+Если Gemini возвращает временный `503 UNAVAILABLE` из-за высокой нагрузки, бот пробует
+fallback-модели из `.env`:
+
+```bash
+GEMINI_FALLBACK_MODELS=gemini-2.5-flash-lite
+GEMINI_STT_FALLBACK_MODELS=gemini-2.5-flash-lite
+```
+
 Запуск:
 
 ```bash

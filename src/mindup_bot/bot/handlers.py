@@ -16,6 +16,7 @@ from telegram.ext import (
     filters,
 )
 
+from mindup_bot.ai.gemini_retry import TransientGeminiError
 from mindup_bot.ai.roles import Evaluator, MemoryUpdater, TopicSelector, Tutor
 from mindup_bot.ai.schemas import Feedback, TopicChoice, TutorReply
 from mindup_bot.bot.formatters import format_feedback, format_help, format_profile, format_settings
@@ -586,6 +587,18 @@ async def extract_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await voice_file.download_to_drive(custom_path=incoming_path)
     try:
         transcript = await speech_to_text.transcribe(incoming_path)
+    except TransientGeminiError:
+        logger.exception("Voice transcription failed because Gemini is temporarily unavailable")
+        user = await ensure_user(update, context)
+        if user.get("interface_language") == "en":
+            await message.reply_text(
+                "Speech recognition is temporarily unavailable. Please type your answer."
+            )
+        else:
+            await message.reply_text(
+                "Распознавание голоса временно недоступно. Напиши ответ текстом."
+            )
+        return ""
     finally:
         incoming_path.unlink(missing_ok=True)
 

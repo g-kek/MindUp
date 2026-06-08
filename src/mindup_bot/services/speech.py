@@ -9,6 +9,7 @@ from pathlib import Path
 import edge_tts
 from google import genai
 
+from mindup_bot.ai.gemini_retry import call_with_model_fallback, model_candidates
 from mindup_bot.config import Settings
 
 
@@ -16,7 +17,10 @@ class SpeechToText:
     def __init__(self, settings: Settings) -> None:
         os.environ.setdefault("GEMINI_API_KEY", settings.gemini_api_key)
         self._client = genai.Client(api_key=settings.gemini_api_key)
-        self._model = settings.gemini_stt_model
+        self._models = model_candidates(
+            settings.gemini_stt_model,
+            settings.gemini_stt_fallback_models,
+        )
 
     async def transcribe(self, audio_path: Path) -> str:
         return await asyncio.to_thread(self._transcribe_sync, audio_path)
@@ -28,9 +32,13 @@ Transcribe this Telegram voice message into English text.
 If the speaker uses Russian or another language, translate the meaning into English.
 Return only the transcript, no commentary.
 """.strip()
-        response = self._client.models.generate_content(
-            model=self._model,
-            contents=[prompt, uploaded],
+        response = call_with_model_fallback(
+            self._models,
+            lambda model: self._client.models.generate_content(
+                model=model,
+                contents=[prompt, uploaded],
+            ),
+            operation="transcribe",
         )
         return (response.text or "").strip()
 

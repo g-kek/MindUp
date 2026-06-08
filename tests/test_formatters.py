@@ -1,5 +1,10 @@
-from mindup_bot.ai.schemas import Feedback
-from mindup_bot.bot.formatters import format_feedback, format_settings
+from mindup_bot.ai.schemas import Feedback, ProgressInsight
+from mindup_bot.bot.formatters import (
+    format_feedback,
+    format_progress_insight,
+    format_settings,
+    format_vocabulary,
+)
 
 
 def test_format_feedback_contains_core_sections() -> None:
@@ -26,7 +31,7 @@ def test_format_feedback_contains_core_sections() -> None:
     text = format_feedback(feedback)
 
     assert "🧾 Разбор сессии" in text
-    assert "🏆 Estimated CEFR: B1" in text
+    assert "🏆 Примерный CEFR: B1" in text
     assert "I think it good -> I think it is useful." in text
 
 
@@ -37,6 +42,7 @@ def test_format_settings_uses_interface_language() -> None:
         "topics": ["technology"],
         "correction_style": "after_session",
         "reminder_time": "none",
+        "tts_voice": "en-US-GuyNeural",
         "interface_language": "en",
     }
 
@@ -46,4 +52,39 @@ def test_format_settings_uses_interface_language() -> None:
     assert "Speaking confidence" in text
     assert "Technology" in text
     assert "No reminders" in text
+    assert "Guy · US male" in text
     assert "Настройки" not in text
+
+
+def test_format_vocabulary_lists_saved_phrases() -> None:
+    text = format_vocabulary(
+        [
+            {
+                "phrase": "I tend to agree",
+                "translation": "я скорее согласен",
+                "note": "Useful soft opinion.",
+                "times_seen": 2,
+            }
+        ],
+        "ru",
+    )
+
+    assert "📚 Словарь" in text
+    assert "I tend to agree" in text
+    assert "я скорее согласен" in text
+    assert "x2" in text
+
+
+def test_format_progress_insight_uses_language() -> None:
+    insight = ProgressInsight(
+        overall_summary="Ты стал увереннее отвечать.",
+        recent_change="Ответы стали конкретнее.",
+        last_day_summary="Вчера была одна сессия.",
+        next_focus="Добавляй примеры.",
+        achievements=["Регулярная практика"],
+    )
+
+    text = format_progress_insight(insight, "ru")
+
+    assert "📈 Анализ прогресса" in text
+    assert "Регулярная практика" in text

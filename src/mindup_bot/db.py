@@ -44,6 +44,8 @@ class Database:
                     topics_json TEXT NOT NULL DEFAULT '[]',
                     correction_style TEXT,
                     reminder_time TEXT,
+                    custom_topic_pending INTEGER NOT NULL DEFAULT 0,
+                    tts_voice TEXT,
                     onboarding_completed INTEGER NOT NULL DEFAULT 0,
                     onboarding_step TEXT,
                     onboarding_data_json TEXT NOT NULL DEFAULT '{}',
@@ -95,6 +97,30 @@ class Database:
                     FOREIGN KEY(user_id) REFERENCES users(telegram_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS vocabulary_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    phrase TEXT NOT NULL,
+                    translation TEXT,
+                    note TEXT,
+                    source_session_id INTEGER,
+                    times_seen INTEGER NOT NULL DEFAULT 1,
+                    learned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(user_id) REFERENCES users(telegram_id),
+                    FOREIGN KEY(source_session_id) REFERENCES sessions(id),
+                    UNIQUE(user_id, phrase)
+                );
+
+                CREATE TABLE IF NOT EXISTS progress_reports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    scope TEXT NOT NULL,
+                    report_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(user_id) REFERENCES users(telegram_id)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_sessions_user_status
                     ON sessions(user_id, status, created_at);
                 CREATE INDEX IF NOT EXISTS idx_messages_session
@@ -103,8 +129,19 @@ class Database:
                     ON memories(user_id, importance, created_at);
                 CREATE INDEX IF NOT EXISTS idx_used_topics_user
                     ON used_topics(user_id, used_at);
+                CREATE INDEX IF NOT EXISTS idx_vocabulary_user
+                    ON vocabulary_items(user_id, last_seen_at);
+                CREATE INDEX IF NOT EXISTS idx_progress_reports_user
+                    ON progress_reports(user_id, created_at);
                 """
             )
+            await self._ensure_column(
+                db,
+                "users",
+                "custom_topic_pending",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            await self._ensure_column(db, "users", "tts_voice", "TEXT")
             await db.commit()
 
     @asynccontextmanager
@@ -133,6 +170,18 @@ class Database:
     ) -> list[aiosqlite.Row]:
         async with db.execute(query, params) as cursor:
             return await cursor.fetchall()
+
+    async def _ensure_column(
+        self,
+        db: aiosqlite.Connection,
+        table: str,
+        column: str,
+        definition: str,
+    ) -> None:
+        rows = await self._fetchall(db, f"PRAGMA table_info({table})")
+        if column in {row["name"] for row in rows}:
+            return
+        await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     async def upsert_user(
         self,
@@ -233,6 +282,8 @@ class Database:
             "topics",
             "correction_style",
             "reminder_time",
+            "custom_topic_pending",
+            "tts_voice",
         }
         unknown_fields = set(updates) - allowed_fields
         if unknown_fields:
@@ -277,6 +328,12 @@ class Database:
                 (telegram_id,),
             )
             await db.commit()
+
+    async def set_custom_topic_pending(self, telegram_id: int, is_pending: bool) -> None:
+        await self.update_user_settings(
+            telegram_id,
+            {"custom_topic_pending": 1 if is_pending else 0},
+        )
 
     async def list_users_with_reminders(self) -> list[dict[str, Any]]:
         async with self.connect() as db:
@@ -375,9 +432,9 @@ class Database:
         role: str,
         content: str,
         voice_file_id: str | None = None,
-    ) -> None:
+    ) -> int:
         async with self.connect() as db:
-            await db.execute(
+            cursor = await db.execute(
                 """
                 INSERT INTO session_messages (session_id, role, content, voice_file_id)
                 VALUES (?, ?, ?, ?)
@@ -385,6 +442,21 @@ class Database:
                 (session_id, role, content, voice_file_id),
             )
             await db.commit()
+            return int(cursor.lastrowid)
+
+    async def get_message_for_user(self, message_id: int, user_id: int) -> dict[str, Any] | None:
+        async with self.connect() as db:
+            row = await self._fetchone(
+                db,
+                """
+                SELECT session_messages.*
+                FROM session_messages
+                JOIN sessions ON sessions.id = session_messages.session_id
+                WHERE session_messages.id = ? AND sessions.user_id = ?
+                """,
+                (message_id, user_id),
+            )
+        return dict(row) if row else None
 
     async def get_session_messages(self, session_id: int, limit: int = 20) -> list[dict[str, Any]]:
         async with self.connect() as db:
@@ -438,6 +510,65 @@ class Database:
             )
             await db.commit()
 
+    async def upsert_vocabulary_items(
+        self,
+        user_id: int,
+        session_id: int,
+        phrases: list[dict[str, Any]],
+    ) -> None:
+        clean_phrases = [
+            phrase
+            for phrase in phrases
+            if str(phrase.get("phrase") or "").strip()
+        ]
+        if not clean_phrases:
+            return
+        async with self.connect() as db:
+            await db.executemany(
+                """
+                INSERT INTO vocabulary_items (
+                    user_id,
+                    phrase,
+                    translation,
+                    note,
+                    source_session_id
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, phrase) DO UPDATE SET
+                    translation = excluded.translation,
+                    note = excluded.note,
+                    source_session_id = excluded.source_session_id,
+                    times_seen = vocabulary_items.times_seen + 1,
+                    last_seen_at = CURRENT_TIMESTAMP
+                """,
+                [
+                    (
+                        user_id,
+                        str(phrase.get("phrase") or "").strip(),
+                        str(phrase.get("translation") or "").strip(),
+                        str(phrase.get("note") or "").strip(),
+                        session_id,
+                    )
+                    for phrase in clean_phrases
+                ],
+            )
+            await db.commit()
+
+    async def get_vocabulary_items(self, user_id: int, limit: int = 30) -> list[dict[str, Any]]:
+        async with self.connect() as db:
+            rows = await self._fetchall(
+                db,
+                """
+                SELECT *
+                FROM vocabulary_items
+                WHERE user_id = ?
+                ORDER BY last_seen_at DESC, id DESC
+                LIMIT ?
+                """,
+                (user_id, limit),
+            )
+        return [dict(row) for row in rows]
+
     async def get_recent_topics(self, user_id: int, limit: int = 8) -> list[dict[str, Any]]:
         async with self.connect() as db:
             rows = await self._fetchall(
@@ -482,9 +613,68 @@ class Database:
             "last_feedback": last_feedback,
         }
 
+    async def get_completed_sessions(self, user_id: int, limit: int = 10) -> list[dict[str, Any]]:
+        async with self.connect() as db:
+            rows = await self._fetchall(
+                db,
+                """
+                SELECT *
+                FROM sessions
+                WHERE user_id = ? AND status = 'completed'
+                ORDER BY completed_at DESC, id DESC
+                LIMIT ?
+                """,
+                (user_id, limit),
+            )
+        return [self._session_from_row(row) for row in rows]
+
+    async def get_completed_sessions_since(
+        self,
+        user_id: int,
+        since: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        async with self.connect() as db:
+            rows = await self._fetchall(
+                db,
+                """
+                SELECT *
+                FROM sessions
+                WHERE user_id = ?
+                    AND status = 'completed'
+                    AND completed_at >= ?
+                ORDER BY completed_at DESC, id DESC
+                LIMIT ?
+                """,
+                (user_id, since, limit),
+            )
+        return [self._session_from_row(row) for row in rows]
+
+    async def add_progress_report(
+        self,
+        user_id: int,
+        scope: str,
+        report: dict[str, Any],
+    ) -> None:
+        async with self.connect() as db:
+            await db.execute(
+                """
+                INSERT INTO progress_reports (user_id, scope, report_json)
+                VALUES (?, ?, ?)
+                """,
+                (user_id, scope, _json_dumps(report)),
+            )
+            await db.commit()
+
     def _user_from_row(self, row: aiosqlite.Row) -> dict[str, Any]:
         user = dict(row)
         user["topics"] = _json_loads(user.pop("topics_json", "[]"), [])
         user["onboarding_data"] = _json_loads(user.pop("onboarding_data_json", "{}"), {})
         user["onboarding_completed"] = bool(user["onboarding_completed"])
+        user["custom_topic_pending"] = bool(user.get("custom_topic_pending", 0))
         return user
+
+    def _session_from_row(self, row: aiosqlite.Row) -> dict[str, Any]:
+        session = dict(row)
+        session["feedback"] = _json_loads(session.get("feedback_json"), {})
+        return session

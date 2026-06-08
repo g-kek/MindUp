@@ -9,6 +9,8 @@ SETTINGS_LABEL = "⚙️ Настройки"
 HELP_LABEL = "❓ Помощь"
 FINISH_LABEL = "✅ Завершить"
 MENU_LABEL = "🏠 Меню"
+CUSTOM_TOPIC_LABEL = "✍️ Своя тема"
+VOCABULARY_LABEL = "📚 Словарь"
 
 START_PRACTICE_LABEL_EN = "🚀 Start practice"
 PROFILE_LABEL_EN = "📊 My profile"
@@ -16,6 +18,8 @@ SETTINGS_LABEL_EN = "⚙️ Settings"
 HELP_LABEL_EN = "❓ Help"
 FINISH_LABEL_EN = "✅ Finish"
 MENU_LABEL_EN = "🏠 Menu"
+CUSTOM_TOPIC_LABEL_EN = "✍️ Custom topic"
+VOCABULARY_LABEL_EN = "📚 Vocabulary"
 
 
 LEVEL_OPTIONS = [
@@ -105,17 +109,26 @@ LANGUAGE_OPTIONS = [
     ("🇬🇧 English", "en"),
 ]
 
+VOICE_OPTIONS = [
+    ("Jenny · US female", "en-US-JennyNeural"),
+    ("Guy · US male", "en-US-GuyNeural"),
+    ("Sonia · UK female", "en-GB-SoniaNeural"),
+    ("Ryan · UK male", "en-GB-RyanNeural"),
+]
+
 
 def main_menu(language: str | None = "ru") -> ReplyKeyboardMarkup:
     if language == "en":
         buttons = [
             [START_PRACTICE_LABEL_EN, PROFILE_LABEL_EN],
+            [CUSTOM_TOPIC_LABEL_EN, VOCABULARY_LABEL_EN],
             [SETTINGS_LABEL_EN, HELP_LABEL_EN],
         ]
         placeholder = "Choose an action"
     else:
         buttons = [
             [START_PRACTICE_LABEL, PROFILE_LABEL],
+            [CUSTOM_TOPIC_LABEL, VOCABULARY_LABEL],
             [SETTINGS_LABEL, HELP_LABEL],
         ]
         placeholder = "Выбери действие"
@@ -136,6 +149,7 @@ def settings_keyboard(language: str | None = "ru") -> InlineKeyboardMarkup:
             [InlineKeyboardButton("📚 Topics", callback_data="settings:edit:topics")],
             [InlineKeyboardButton("🧾 Corrections", callback_data="settings:edit:correction_style")],
             [InlineKeyboardButton("🔔 Reminder", callback_data="settings:edit:reminder_time")],
+            [InlineKeyboardButton("🔊 Bot voice", callback_data="settings:edit:tts_voice")],
             [InlineKeyboardButton("🌐 Interface language", callback_data="settings:edit:interface_language")],
             [InlineKeyboardButton("⬅️ Back to menu", callback_data="settings:close")],
         ]
@@ -146,6 +160,7 @@ def settings_keyboard(language: str | None = "ru") -> InlineKeyboardMarkup:
             [InlineKeyboardButton("📚 Темы", callback_data="settings:edit:topics")],
             [InlineKeyboardButton("🧾 Исправления", callback_data="settings:edit:correction_style")],
             [InlineKeyboardButton("🔔 Напоминание", callback_data="settings:edit:reminder_time")],
+            [InlineKeyboardButton("🔊 Голос бота", callback_data="settings:edit:tts_voice")],
             [InlineKeyboardButton("🌐 Язык интерфейса", callback_data="settings:edit:interface_language")],
             [InlineKeyboardButton("⬅️ Назад в меню", callback_data="settings:close")],
         ]
@@ -177,6 +192,8 @@ def settings_options_for(field: str, language: str | None = "ru") -> list[tuple[
         return REMINDER_OPTIONS_EN if language == "en" else REMINDER_OPTIONS
     if field == "interface_language":
         return LANGUAGE_OPTIONS
+    if field == "tts_voice":
+        return VOICE_OPTIONS
     raise ValueError(f"Unsupported settings field: {field}")
 
 
@@ -217,3 +234,25 @@ def practice_reply_keyboard_for(language: str | None = "ru") -> ReplyKeyboardMar
             input_field_placeholder="Send a voice or type your answer",
         )
     return practice_reply_keyboard()
+
+
+def practice_message_keyboard(message_id: int, language: str | None = "ru") -> InlineKeyboardMarkup:
+    if language == "en":
+        return InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("Translate", callback_data=f"practice:translate:{message_id}")],
+                [
+                    InlineKeyboardButton("Finish", callback_data="practice:finish"),
+                    InlineKeyboardButton("Menu", callback_data="practice:menu"),
+                ],
+            ]
+        )
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("Перевести", callback_data=f"practice:translate:{message_id}")],
+            [
+                InlineKeyboardButton("Завершить", callback_data="practice:finish"),
+                InlineKeyboardButton("Меню", callback_data="practice:menu"),
+            ],
+        ]
+    )

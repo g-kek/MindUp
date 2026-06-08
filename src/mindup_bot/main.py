@@ -6,7 +6,15 @@ from telegram import Update
 from telegram.ext import Application, ApplicationBuilder, ContextTypes
 
 from mindup_bot.ai.gemini import GeminiGateway
-from mindup_bot.ai.roles import Evaluator, MemoryUpdater, TopicSelector, Tutor
+from mindup_bot.ai.roles import (
+    Evaluator,
+    MemoryUpdater,
+    ProgressAnalyzer,
+    TopicSelector,
+    Translator,
+    Tutor,
+    VocabularyExtractor,
+)
 from mindup_bot.bot.handlers import register_handlers
 from mindup_bot.bot.reminders import schedule_existing_reminders
 from mindup_bot.config import get_settings
@@ -60,6 +68,9 @@ def build_application() -> Application:
             "tutor": Tutor(gemini),
             "evaluator": Evaluator(gemini),
             "memory_updater": MemoryUpdater(gemini),
+            "translator": Translator(gemini),
+            "progress_analyzer": ProgressAnalyzer(gemini),
+            "vocabulary_extractor": VocabularyExtractor(gemini),
             "speech_to_text": SpeechToText(settings),
             "text_to_speech": TextToSpeech(settings),
         }

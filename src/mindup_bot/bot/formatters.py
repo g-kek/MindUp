@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mindup_bot.ai.schemas import Feedback
+from mindup_bot.ai.schemas import Feedback, ProgressInsight
 
 GOAL_LABELS = {
     "ru": {
@@ -77,6 +77,21 @@ LANGUAGE_LABELS = {
     "en": {"ru": "Russian", "en": "English"},
 }
 
+VOICE_LABELS = {
+    "ru": {
+        "en-US-JennyNeural": "Jenny · США, женский",
+        "en-US-GuyNeural": "Guy · США, мужской",
+        "en-GB-SoniaNeural": "Sonia · Британия, женский",
+        "en-GB-RyanNeural": "Ryan · Британия, мужской",
+    },
+    "en": {
+        "en-US-JennyNeural": "Jenny · US female",
+        "en-US-GuyNeural": "Guy · US male",
+        "en-GB-SoniaNeural": "Sonia · UK female",
+        "en-GB-RyanNeural": "Ryan · UK male",
+    },
+}
+
 
 def progress_bar(percent: int, width: int = 10) -> str:
     safe_percent = max(0, min(100, percent))
@@ -101,6 +116,7 @@ def label_value(kind: str, value: str | None, language: str) -> str:
         "correction": CORRECTION_LABELS,
         "reminder": REMINDER_LABELS,
         "language": LANGUAGE_LABELS,
+        "voice": VOICE_LABELS,
     }
     return maps[kind][language].get(value, value)
 
@@ -127,14 +143,14 @@ def format_feedback(feedback: Feedback, language: str | None = "ru") -> str:
     return (
         "🧾 Разбор сессии\n"
         "━━━━━━━━━━━━\n\n"
-        f"📌 Summary: {feedback.summary}\n\n"
-        f"✅ Main strength: {feedback.main_strength}\n\n"
-        f"🎯 Main issue: {feedback.main_issue}\n\n"
-        "💬 Better phrases:\n"
+        f"📌 Итог: {feedback.summary}\n\n"
+        f"✅ Сильная сторона: {feedback.main_strength}\n\n"
+        f"🎯 Главная точка роста: {feedback.main_issue}\n\n"
+        "💬 Фразы лучше:\n"
         f"{phrases}\n\n"
-        f"🏠 Micro-homework: {feedback.micro_homework}\n\n"
-        f"🏆 Estimated CEFR: {feedback.estimated_cefr}\n\n"
-        "📊 Scores:\n"
+        f"🏠 Мини-задание: {feedback.micro_homework}\n\n"
+        f"🏆 Примерный CEFR: {feedback.estimated_cefr}\n\n"
+        "📊 Оценки:\n"
         f"{scores}"
     )
 
@@ -211,6 +227,7 @@ def format_settings(user: dict) -> str:
             f"📚 Topics: {topics}\n"
             f"🧾 Corrections: {label_value('correction', user.get('correction_style'), language)}\n"
             f"🔔 Reminder: {label_value('reminder', user.get('reminder_time'), language)}\n"
+            f"🔊 Bot voice: {label_value('voice', user.get('tts_voice') or 'en-US-JennyNeural', language)}\n"
             f"🌐 Interface: {label_value('language', user.get('interface_language'), language)}\n\n"
             "Choose what you want to change:"
         )
@@ -222,9 +239,66 @@ def format_settings(user: dict) -> str:
         f"📚 Темы: {topics}\n"
         f"🧾 Исправления: {label_value('correction', user.get('correction_style'), language)}\n"
         f"🔔 Напоминание: {label_value('reminder', user.get('reminder_time'), language)}\n"
+        f"🔊 Голос бота: {label_value('voice', user.get('tts_voice') or 'en-US-JennyNeural', language)}\n"
         f"🌐 Интерфейс: {label_value('language', user.get('interface_language'), language)}\n\n"
         "Выбери, что хочешь изменить:"
     )
+
+
+def format_progress_insight(insight: ProgressInsight, language: str | None = "ru") -> str:
+    if language == "en":
+        achievements = "\n".join(f"- {item}" for item in insight.achievements) or "- Not enough data yet."
+        return (
+            "📈 Progress analysis\n"
+            "━━━━━━━━━━━━\n\n"
+            f"📌 Across sessions: {insight.overall_summary}\n\n"
+            f"🔄 Recent change: {insight.recent_change}\n\n"
+            f"🗓 Last 24 hours: {insight.last_day_summary}\n\n"
+            "✅ Wins:\n"
+            f"{achievements}\n\n"
+            f"🎯 Next focus: {insight.next_focus}"
+        )
+
+    achievements = "\n".join(f"- {item}" for item in insight.achievements) or "- Пока мало данных."
+    return (
+        "📈 Анализ прогресса\n"
+        "━━━━━━━━━━━━\n\n"
+        f"📌 По сессиям: {insight.overall_summary}\n\n"
+        f"🔄 Последнее изменение: {insight.recent_change}\n\n"
+        f"🗓 За 24 часа: {insight.last_day_summary}\n\n"
+        "✅ Что закрепилось:\n"
+        f"{achievements}\n\n"
+        f"🎯 Следующий фокус: {insight.next_focus}"
+    )
+
+
+def format_vocabulary(items: list[dict], language: str | None = "ru") -> str:
+    if not items:
+        if language == "en":
+            return (
+                "📚 Vocabulary\n"
+                "━━━━━━━━━━━━\n\n"
+                "No saved phrases yet. Finish a practice session to collect useful phrases."
+            )
+        return (
+            "📚 Словарь\n"
+            "━━━━━━━━━━━━\n\n"
+            "Пока нет сохраненных фраз. Заверши практику, чтобы собрать полезные выражения."
+        )
+
+    lines = []
+    for index, item in enumerate(items, start=1):
+        phrase = item.get("phrase") or ""
+        translation = item.get("translation") or ("no translation" if language == "en" else "без перевода")
+        note = item.get("note") or ""
+        times_seen = item.get("times_seen") or 1
+        if note:
+            lines.append(f"{index}. {phrase}\n   {translation}\n   {note} · x{times_seen}")
+        else:
+            lines.append(f"{index}. {phrase}\n   {translation} · x{times_seen}")
+
+    title = "📚 Vocabulary" if language == "en" else "📚 Словарь"
+    return f"{title}\n━━━━━━━━━━━━\n\n" + "\n\n".join(lines)
 
 
 def format_help(language: str | None = "ru") -> str:

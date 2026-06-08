@@ -49,12 +49,12 @@ class TextToSpeech:
         self._voice = settings.tts_voice
         self._rate = settings.tts_rate
 
-    async def synthesize(self, text: str) -> Path:
+    async def synthesize(self, text: str, voice: str | None = None) -> Path:
         self._audio_dir.mkdir(parents=True, exist_ok=True)
         file_id = uuid.uuid4().hex
         mp3_path = self._audio_dir / f"tts-{file_id}.mp3"
         output_path = self._audio_dir / f"tts-{file_id}.ogg"
-        communicate = edge_tts.Communicate(text, voice=self._voice, rate=self._rate)
+        communicate = edge_tts.Communicate(text, voice=voice or self._voice, rate=self._rate)
         await communicate.save(str(mp3_path))
 
         ffmpeg = shutil.which("ffmpeg")

@@ -52,3 +52,24 @@ class MemoryItem(BaseModel):
 class MemoryUpdate(BaseModel):
     memories: list[MemoryItem] = Field(default_factory=list, max_length=5)
 
+
+class TranslationResult(BaseModel):
+    translation: str = Field(description="Natural translation of the source text")
+
+
+class ProgressInsight(BaseModel):
+    overall_summary: str = Field(description="Short cross-session progress summary")
+    recent_change: str = Field(description="What changed across recent conversations")
+    last_day_summary: str = Field(description="What happened during the last 24 hours")
+    next_focus: str = Field(description="One practical next focus for the learner")
+    achievements: list[str] = Field(default_factory=list, max_length=3)
+
+
+class VocabularyPhrase(BaseModel):
+    phrase: str = Field(description="Useful English phrase learned by the user")
+    translation: str = Field(description="Translation in the user's interface language")
+    note: str = Field(description="Short usage note in the user's interface language")
+
+
+class VocabularyUpdate(BaseModel):
+    phrases: list[VocabularyPhrase] = Field(default_factory=list, max_length=8)

@@ -4,7 +4,15 @@ import json
 from typing import Any
 
 from mindup_bot.ai.gemini import GeminiGateway
-from mindup_bot.ai.schemas import Feedback, MemoryUpdate, TopicChoice, TutorReply
+from mindup_bot.ai.schemas import (
+    Feedback,
+    MemoryUpdate,
+    ProgressInsight,
+    TopicChoice,
+    TranslationResult,
+    TutorReply,
+    VocabularyUpdate,
+)
 
 
 def _compact_json(value: Any) -> str:
@@ -46,6 +54,29 @@ Choose a topic. Keep the opening question accessible for {profile.get("english_l
             prompt=prompt,
             schema=TopicChoice,
             temperature=0.7,
+        )
+
+    async def from_custom_topic(
+        self,
+        *,
+        profile: dict[str, Any],
+        requested_topic: str,
+    ) -> TopicChoice:
+        prompt = f"""
+User profile:
+{_compact_json(_profile_view(profile))}
+
+Requested topic:
+{requested_topic}
+
+Create one practical 10-minute speaking topic from the user's request.
+Return an English title and exactly one accessible opening question in English.
+""".strip()
+        return await self._gemini.generate_json(
+            system_instruction=self.system_instruction,
+            prompt=prompt,
+            schema=TopicChoice,
+            temperature=0.55,
         )
 
 
@@ -111,7 +142,7 @@ class Evaluator:
     system_instruction = """
 You are Evaluator for an English speaking practice session.
 Give short, specific, supportive feedback. Focus on communicative ability, clarity, vocabulary,
-grammar patterns, and argumentation. Do not be overly enthusiastic. Use English.
+grammar patterns, and argumentation. Do not be overly enthusiastic.
 Return exactly: summary, one strength, one issue, two improved phrases, one micro-homework,
 estimated CEFR, and 4-5 scores from 1 to 5.
 """.strip()
@@ -125,7 +156,9 @@ estimated CEFR, and 4-5 scores from 1 to 5.
         profile: dict[str, Any],
         session: dict[str, Any],
         messages: list[dict[str, Any]],
+        language: str,
     ) -> Feedback:
+        feedback_language = "Russian" if language == "ru" else "English"
         prompt = f"""
 Profile:
 {_compact_json(_profile_view(profile))}
@@ -136,12 +169,121 @@ Dialogue:
 {_compact_json([{"role": m["role"], "content": m["content"]} for m in messages])}
 
 Evaluate the user's English only from this session. Keep each field concise.
+Write summary, strength, issue, micro-homework, score names, and score notes in {feedback_language}.
+Keep original and improved phrases in English.
 """.strip()
         return await self._gemini.generate_json(
             system_instruction=self.system_instruction,
             prompt=prompt,
             schema=Feedback,
             temperature=0.35,
+        )
+
+
+class Translator:
+    system_instruction = """
+You translate short English learning-bot messages for a language learner.
+Preserve meaning, keep formatting readable, and do not add commentary.
+""".strip()
+
+    def __init__(self, gemini: GeminiGateway) -> None:
+        self._gemini = gemini
+
+    async def translate(self, *, text: str, language: str) -> TranslationResult:
+        target_language = "Russian" if language == "ru" else "English"
+        prompt = f"""
+Target language: {target_language}
+
+Text:
+{text}
+""".strip()
+        return await self._gemini.generate_json(
+            system_instruction=self.system_instruction,
+            prompt=prompt,
+            schema=TranslationResult,
+            temperature=0.2,
+        )
+
+
+class ProgressAnalyzer:
+    system_instruction = """
+You analyze progress for an English speaking practice learner.
+Use recent completed sessions, feedback, and dialogue summaries.
+Be concrete, avoid empty praise, and give one practical next focus.
+""".strip()
+
+    def __init__(self, gemini: GeminiGateway) -> None:
+        self._gemini = gemini
+
+    async def analyze(
+        self,
+        *,
+        profile: dict[str, Any],
+        recent_sessions: list[dict[str, Any]],
+        last_day_sessions: list[dict[str, Any]],
+        language: str,
+    ) -> ProgressInsight:
+        target_language = "Russian" if language == "ru" else "English"
+        prompt = f"""
+Profile:
+{_compact_json(_profile_view(profile))}
+
+Recent completed sessions:
+{_compact_json([_session_view(session) for session in recent_sessions])}
+
+Sessions from the last 24 hours:
+{_compact_json([_session_view(session) for session in last_day_sessions])}
+
+Write the whole report in {target_language}.
+If there is not enough data, say that directly and still give a useful next focus.
+""".strip()
+        return await self._gemini.generate_json(
+            system_instruction=self.system_instruction,
+            prompt=prompt,
+            schema=ProgressInsight,
+            temperature=0.35,
+        )
+
+
+class VocabularyExtractor:
+    system_instruction = """
+You extract useful English phrases a learner studied during a speaking session.
+Prefer corrected/improved phrases, reusable collocations, and concise sentence frames.
+Return phrases worth saving to a personal vocabulary list.
+""".strip()
+
+    def __init__(self, gemini: GeminiGateway) -> None:
+        self._gemini = gemini
+
+    async def extract(
+        self,
+        *,
+        profile: dict[str, Any],
+        session: dict[str, Any],
+        messages: list[dict[str, Any]],
+        feedback: Feedback,
+        language: str,
+    ) -> VocabularyUpdate:
+        target_language = "Russian" if language == "ru" else "English"
+        prompt = f"""
+Profile:
+{_compact_json(_profile_view(profile))}
+
+Topic: {session["topic_title"]}
+
+Dialogue:
+{_compact_json([{"role": m["role"], "content": m["content"]} for m in messages])}
+
+Feedback:
+{feedback.model_dump_json()}
+
+For each phrase, write translation and note in {target_language}.
+""".strip()
+        return await self._gemini.generate_json(
+            system_instruction=self.system_instruction,
+            prompt=prompt,
+            schema=VocabularyUpdate,
+            temperature=0.25,
         )
 
 
@@ -196,3 +338,12 @@ def _profile_view(profile: dict[str, Any]) -> dict[str, Any]:
         "interface_language": profile.get("interface_language"),
     }
 
+
+def _session_view(session: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "topic_title": session.get("topic_title"),
+        "turn_count": session.get("turn_count"),
+        "summary": session.get("summary"),
+        "completed_at": session.get("completed_at"),
+        "feedback": session.get("feedback", {}),
+    }

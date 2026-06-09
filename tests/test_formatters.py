@@ -1,9 +1,11 @@
-from mindup_bot.ai.schemas import Feedback, ProgressInsight
+from mindup_bot.ai.schemas import Feedback, ProgressInsight, SkillDrill, TopicVocabulary
 from mindup_bot.bot.formatters import (
     format_feedback,
     format_profile,
     format_progress_insight,
     format_settings,
+    format_skill_drill,
+    format_topic_vocabulary,
     format_vocabulary,
 )
 
@@ -109,3 +111,85 @@ def test_format_profile_includes_daily_streak() -> None:
     text = format_profile(user, progress)
 
     assert "🔥 Серия: 3 дн. (сегодня выполнено)" in text
+
+
+def test_format_topic_vocabulary_contains_examples() -> None:
+    vocabulary = TopicVocabulary.model_validate(
+        {
+            "title": "Work focus",
+            "items": [
+                {
+                    "phrase": "to stay focused",
+                    "translation": "оставаться сфокусированным",
+                    "example": "I try to stay focused in the morning.",
+                },
+                {
+                    "phrase": "a clear priority",
+                    "translation": "ясный приоритет",
+                    "example": "I need a clear priority.",
+                },
+                {
+                    "phrase": "to avoid distractions",
+                    "translation": "избегать отвлечений",
+                    "example": "I avoid distractions when I work.",
+                },
+                {
+                    "phrase": "deep work",
+                    "translation": "глубокая работа",
+                    "example": "Deep work helps me finish difficult tasks.",
+                },
+                {
+                    "phrase": "to plan ahead",
+                    "translation": "планировать заранее",
+                    "example": "I plan ahead on Sunday.",
+                },
+            ],
+        }
+    )
+
+    text = format_topic_vocabulary(vocabulary, "ru")
+
+    assert "📚 Слова по теме" in text
+    assert "to stay focused" in text
+    assert "I try to stay focused in the morning." in text
+
+
+def test_format_skill_drill_contains_tasks() -> None:
+    drill = SkillDrill.model_validate(
+        {
+            "skill": "vocabulary",
+            "title": "Vocabulary practice",
+            "tasks": [
+                {
+                    "prompt": "Переведи: практичное решение.",
+                    "answer": "a practical solution",
+                    "explanation": "Useful phrase.",
+                },
+                {
+                    "prompt": "Переведи: по моему опыту.",
+                    "answer": "in my experience",
+                    "explanation": "Use for examples.",
+                },
+                {
+                    "prompt": "Закончи: This topic is important because ...",
+                    "answer": "This topic is important because it affects people.",
+                    "explanation": "Adds reason.",
+                },
+                {
+                    "prompt": "Переведи: сравнить варианты.",
+                    "answer": "to compare options",
+                    "explanation": "Good for arguments.",
+                },
+                {
+                    "prompt": "Составь фразу с clear example.",
+                    "answer": "Let me give a clear example.",
+                    "explanation": "Makes answer concrete.",
+                },
+            ],
+        }
+    )
+
+    text = format_skill_drill(drill, "ru")
+
+    assert "🎯 Точечная тренировка" in text
+    assert "Ответ: a practical solution" in text

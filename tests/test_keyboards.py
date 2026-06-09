@@ -4,6 +4,7 @@ from mindup_bot.bot.keyboards import (
     practice_message_keyboard,
     settings_keyboard,
     settings_option_keyboard,
+    skill_drill_keyboard,
     topics_keyboard,
 )
 
@@ -33,6 +34,7 @@ def test_main_menu_and_practice_message_include_product_actions() -> None:
     assert "🛟 Поддержка" in menu_buttons
     assert "💬 Feedback" in menu_buttons
     assert "Перевести" in practice_texts
+    assert "Слова по теме" in practice_texts
     assert "Завершить" in practice_texts
 
 
@@ -41,3 +43,11 @@ def test_first_session_keyboard_has_primary_paths() -> None:
 
     assert "Начать первую практику" in texts
     assert "Выбрать свою тему" in texts
+
+
+def test_skill_drill_keyboard_points_to_session_and_skill() -> None:
+    markup = skill_drill_keyboard(7, "vocabulary", "Vocabulary", "en")
+    button = markup.inline_keyboard[0][0]
+
+    assert button.text == "Train Vocabulary"
+    assert button.callback_data == "drill:start:7:vocabulary"

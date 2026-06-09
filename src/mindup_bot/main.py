@@ -10,7 +10,9 @@ from mindup_bot.ai.roles import (
     Evaluator,
     MemoryUpdater,
     ProgressAnalyzer,
+    SkillDrillBuilder,
     TopicSelector,
+    TopicVocabularyBuilder,
     Translator,
     Tutor,
     VocabularyExtractor,
@@ -71,6 +73,8 @@ def build_application() -> Application:
             "translator": Translator(gemini),
             "progress_analyzer": ProgressAnalyzer(gemini),
             "vocabulary_extractor": VocabularyExtractor(gemini),
+            "topic_vocabulary_builder": TopicVocabularyBuilder(gemini),
+            "skill_drill_builder": SkillDrillBuilder(gemini),
             "speech_to_text": SpeechToText(settings),
             "text_to_speech": TextToSpeech(settings),
         }

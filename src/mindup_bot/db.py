@@ -430,7 +430,7 @@ class Database:
                 "SELECT * FROM sessions WHERE id = ?",
                 (session_id,),
             )
-        return dict(row) if row else None
+        return self._session_from_row(row) if row else None
 
     async def increment_turn_count(self, session_id: int) -> None:
         async with self.connect() as db:

@@ -23,19 +23,31 @@ from mindup_bot.ai.roles import (
     Evaluator,
     MemoryUpdater,
     ProgressAnalyzer,
+    SkillDrillBuilder,
     TopicSelector,
+    TopicVocabularyBuilder,
     Translator,
     Tutor,
     VocabularyExtractor,
 )
-from mindup_bot.ai.schemas import Feedback, ProgressInsight, TopicChoice, TutorReply
+from mindup_bot.ai.schemas import (
+    Feedback,
+    ProgressInsight,
+    ScoreItem,
+    SkillDrill,
+    TopicChoice,
+    TopicVocabulary,
+    TutorReply,
+)
 from mindup_bot.bot.formatters import (
     format_feedback,
     format_help,
     format_profile,
     format_progress_insight,
     format_settings,
+    format_skill_drill,
     format_streak,
+    format_topic_vocabulary,
     format_vocabulary,
 )
 from mindup_bot.bot.keyboards import (
@@ -74,6 +86,7 @@ from mindup_bot.bot.keyboards import (
     settings_keyboard,
     settings_option_keyboard,
     settings_options_for,
+    skill_drill_keyboard,
     topics_keyboard,
 )
 from mindup_bot.bot.reminders import schedule_user_reminder
@@ -333,6 +346,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await handle_practice_callback(update, context, user, data)
         return
 
+    if data.startswith("drill:"):
+        await handle_drill_callback(update, context, user, data)
+        return
+
     if data.startswith("onb:"):
         await handle_onboarding_callback(update, context, user, data)
         return
@@ -382,6 +399,47 @@ async def handle_practice_callback(
         await menu(update, context)
         return
 
+    if action == "topic_words" and len(parts) >= 3:
+        db: Database = context.application.bot_data["db"]
+        try:
+            message_id = int(parts[2])
+        except ValueError:
+            await query.answer("Invalid message" if language == "en" else "Некорректное сообщение")
+            return
+
+        message = await db.get_message_for_user(message_id, user["telegram_id"])
+        if not message:
+            await query.answer(
+                "Topic was not found" if language == "en" else "Тема не найдена",
+                show_alert=True,
+            )
+            return
+        session = await db.get_session(int(message["session_id"]))
+        if session is None:
+            await query.answer(
+                "Topic was not found" if language == "en" else "Тема не найдена",
+                show_alert=True,
+            )
+            return
+
+        await query.answer()
+        await context.bot.send_chat_action(query.message.chat_id, ChatAction.TYPING)
+        topic_vocabulary = await build_topic_vocabulary(context, user, session, language)
+        await db.upsert_vocabulary_items(
+            user["telegram_id"],
+            session["id"],
+            [
+                {
+                    "phrase": item.phrase,
+                    "translation": item.translation,
+                    "note": item.example,
+                }
+                for item in topic_vocabulary.items
+            ],
+        )
+        await query.message.reply_text(format_topic_vocabulary(topic_vocabulary, language))
+        return
+
     if action == "translate" and len(parts) >= 3:
         db: Database = context.application.bot_data["db"]
         try:
@@ -417,6 +475,44 @@ async def handle_practice_callback(
 
         title = "Translation" if language == "en" else "Перевод"
         await query.message.reply_text(f"🔎 {title}\n\n{text}")
+
+
+async def handle_drill_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user: dict[str, Any],
+    callback_data: str,
+) -> None:
+    query = update.callback_query
+    if query is None or query.message is None:
+        return
+    language = user.get("interface_language")
+    parts = callback_data.split(":")
+    if len(parts) < 4 or parts[1] != "start":
+        await query.answer("Invalid drill" if language == "en" else "Некорректная тренировка")
+        return
+
+    try:
+        session_id = int(parts[2])
+    except ValueError:
+        await query.answer("Invalid drill" if language == "en" else "Некорректная тренировка")
+        return
+    skill = parts[3]
+
+    db: Database = context.application.bot_data["db"]
+    session = await db.get_session(session_id)
+    if session is None or session["user_id"] != user["telegram_id"]:
+        await query.answer(
+            "Session was not found" if language == "en" else "Сессия не найдена",
+            show_alert=True,
+        )
+        return
+
+    feedback = _feedback_from_session(session, language)
+    await query.answer()
+    await context.bot.send_chat_action(query.message.chat_id, ChatAction.TYPING)
+    drill = await build_skill_drill(context, user, session, feedback, skill, language)
+    await query.message.reply_text(format_skill_drill(drill, language))
 
 
 async def handle_onboarding_callback(
@@ -1127,6 +1223,28 @@ async def finish_session(
         format_streak(progress_data, language),
         reply_markup=main_menu(user.get("interface_language")),
     )
+    weak_score = weakest_feedback_score(feedback)
+    if weak_score is not None:
+        skill_slug = skill_slug_for(weak_score.name)
+        if language == "en":
+            prompt = (
+                f"Lowest area: {weak_score.name} ({weak_score.score}/5).\n"
+                f"Want to practice {weak_score.name} with short tasks on this topic?"
+            )
+        else:
+            prompt = (
+                f"Самая слабая зона: {weak_score.name} ({weak_score.score}/5).\n"
+                f"Хочешь потренировать {weak_score.name} на этой теме?"
+            )
+        await update.effective_message.reply_text(
+            prompt,
+            reply_markup=skill_drill_keyboard(
+                session["id"],
+                skill_slug,
+                weak_score.name,
+                user.get("interface_language"),
+            ),
+        )
 
 
 async def send_text_and_voice(
@@ -1267,6 +1385,74 @@ def _voice_file_id(update: Update) -> str | None:
     return None
 
 
+async def build_topic_vocabulary(
+    context: ContextTypes.DEFAULT_TYPE,
+    user: dict[str, Any],
+    session: dict[str, Any],
+    language: str | None,
+) -> TopicVocabulary:
+    builder: TopicVocabularyBuilder = context.application.bot_data["topic_vocabulary_builder"]
+    try:
+        return await builder.build(
+            profile=user,
+            session=session,
+            language="en" if language == "en" else "ru",
+        )
+    except Exception:
+        logger.exception("Topic vocabulary generation failed; using fallback list")
+        return fallback_topic_vocabulary(session, "en" if language == "en" else "ru")
+
+
+async def build_skill_drill(
+    context: ContextTypes.DEFAULT_TYPE,
+    user: dict[str, Any],
+    session: dict[str, Any],
+    feedback: Feedback,
+    skill: str,
+    language: str | None,
+) -> SkillDrill:
+    builder: SkillDrillBuilder = context.application.bot_data["skill_drill_builder"]
+    try:
+        return await builder.build(
+            profile=user,
+            session=session,
+            feedback=feedback,
+            skill=skill.replace("_", " "),
+            language="en" if language == "en" else "ru",
+        )
+    except Exception:
+        logger.exception("Skill drill generation failed; using fallback drill")
+        return fallback_skill_drill(session, skill, "en" if language == "en" else "ru")
+
+
+def weakest_feedback_score(feedback: Feedback) -> ScoreItem | None:
+    if not feedback.scores:
+        return None
+    return min(feedback.scores, key=lambda item: item.score)
+
+
+def skill_slug_for(name: str) -> str:
+    normalized = name.lower()
+    if "vocab" in normalized or "словар" in normalized:
+        return "vocabulary"
+    if "grammar" in normalized or "грам" in normalized:
+        return "grammar_patterns"
+    if "clarity" in normalized or "ясн" in normalized:
+        return "clarity"
+    if "communic" in normalized or "коммуник" in normalized:
+        return "communicative_ability"
+    slug = "".join(char if char.isalnum() else "_" for char in normalized).strip("_")
+    return slug or "speaking"
+
+
+def _feedback_from_session(session: dict[str, Any], language: str | None) -> Feedback:
+    feedback = session.get("feedback") or {}
+    try:
+        return Feedback.model_validate(feedback)
+    except ValueError:
+        return fallback_feedback("en" if language == "en" else "ru")
+
+
 def fallback_topic() -> TopicChoice:
     return TopicChoice(
         topic_id="daily_choices",
@@ -1284,6 +1470,285 @@ def fallback_custom_topic(requested_topic: str) -> TopicChoice:
         opening_question=f"What is your opinion about {clean_topic}? Give one clear example.",
         rationale="The user requested this topic.",
     )
+
+
+def fallback_topic_vocabulary(session: dict[str, Any], language: str) -> TopicVocabulary:
+    topic = session.get("topic_title") or "this topic"
+    if language == "en":
+        items = [
+            {
+                "phrase": "to have an impact",
+                "translation": "to influence something",
+                "example": f"This can have an impact on {topic}.",
+            },
+            {
+                "phrase": "a practical solution",
+                "translation": "a useful way to solve a problem",
+                "example": "I think we need a practical solution.",
+            },
+            {
+                "phrase": "to compare options",
+                "translation": "to look at different choices",
+                "example": "It helps to compare options before deciding.",
+            },
+            {
+                "phrase": "a clear example",
+                "translation": "a specific example that is easy to understand",
+                "example": "Let me give a clear example.",
+            },
+            {
+                "phrase": "in my experience",
+                "translation": "from what I have seen or done",
+                "example": "In my experience, this works well.",
+            },
+        ]
+    else:
+        items = [
+            {
+                "phrase": "to have an impact",
+                "translation": "влиять, иметь эффект",
+                "example": f"This can have an impact on {topic}.",
+            },
+            {
+                "phrase": "a practical solution",
+                "translation": "практичное решение",
+                "example": "I think we need a practical solution.",
+            },
+            {
+                "phrase": "to compare options",
+                "translation": "сравнивать варианты",
+                "example": "It helps to compare options before deciding.",
+            },
+            {
+                "phrase": "a clear example",
+                "translation": "понятный конкретный пример",
+                "example": "Let me give a clear example.",
+            },
+            {
+                "phrase": "in my experience",
+                "translation": "по моему опыту",
+                "example": "In my experience, this works well.",
+            },
+        ]
+    return TopicVocabulary.model_validate({"title": str(topic), "items": items})
+
+
+def fallback_skill_drill(session: dict[str, Any], skill: str, language: str) -> SkillDrill:
+    topic = session.get("topic_title") or "this topic"
+    skill_title = skill.replace("_", " ")
+    if language == "en":
+        prompts = _fallback_drill_prompts_en(topic, skill)
+        title = f"{skill_title.title()} practice"
+    else:
+        prompts = _fallback_drill_prompts_ru(topic, skill)
+        title = f"Тренировка: {skill_title}"
+    return SkillDrill.model_validate(
+        {
+            "skill": skill_title,
+            "title": title,
+            "tasks": prompts,
+        }
+    )
+
+
+def _fallback_drill_prompts_ru(topic: str, skill: str) -> list[dict[str, str]]:
+    if skill == "grammar_patterns":
+        return [
+            {
+                "prompt": "Сделай фразу более грамматически полной: I think it useful.",
+                "answer": "I think it is useful.",
+                "explanation": "Добавляем is, потому что после think идет полное утверждение.",
+            },
+            {
+                "prompt": f"Закончи фразу о теме {topic}: If I had more time, ...",
+                "answer": "If I had more time, I would explore this topic more deeply.",
+                "explanation": "Это условная конструкция второго типа: If + past, would + verb.",
+            },
+            {
+                "prompt": "Исправь: People can to improve it.",
+                "answer": "People can improve it.",
+                "explanation": "После modal verb can используем глагол без to.",
+            },
+            {
+                "prompt": "Сделай сравнение: This option / better / for me.",
+                "answer": "This option is better for me.",
+                "explanation": "Для сравнения используем is better.",
+            },
+            {
+                "prompt": "Добавь причину: I prefer this approach because ...",
+                "answer": "I prefer this approach because it is more practical.",
+                "explanation": "Because помогает связать мнение и причину.",
+            },
+        ]
+    if skill == "clarity":
+        return [
+            {
+                "prompt": "Сделай ответ яснее: It is good and useful.",
+                "answer": "It is useful because it saves time and reduces stress.",
+                "explanation": "Ясный ответ содержит конкретную причину.",
+            },
+            {
+                "prompt": "Добавь пример к фразе: This matters in real life.",
+                "answer": "This matters in real life, for example when people need to make quick decisions.",
+                "explanation": "For example делает мысль понятнее.",
+            },
+            {
+                "prompt": "Убери неопределенность: Maybe it can be not bad.",
+                "answer": "I think it can be helpful in some situations.",
+                "explanation": "Более прямые слова звучат увереннее.",
+            },
+            {
+                "prompt": f"Дай структуру ответа по теме {topic}: opinion + reason.",
+                "answer": "I support this idea because it can solve a practical problem.",
+                "explanation": "Структура opinion + reason делает речь понятнее.",
+            },
+            {
+                "prompt": "Перепиши короче: I want to say that my opinion is that this is important.",
+                "answer": "I think this is important.",
+                "explanation": "Короткая фраза часто звучит яснее.",
+            },
+        ]
+    if skill == "communicative_ability":
+        return [
+            {
+                "prompt": "Ответь так, чтобы продолжить диалог: What do you mean?",
+                "answer": "I mean that this topic affects everyday decisions.",
+                "explanation": "Уточнение помогает собеседнику следить за мыслью.",
+            },
+            {
+                "prompt": "Задай follow-up question по теме.",
+                "answer": "How do you see this situation in your own experience?",
+                "explanation": "Вопрос поддерживает диалог.",
+            },
+            {
+                "prompt": "Мягко не согласись.",
+                "answer": "I see your point, but I think there is another side.",
+                "explanation": "Фраза звучит уважительно и естественно.",
+            },
+            {
+                "prompt": "Попроси пример.",
+                "answer": "Could you give me a concrete example?",
+                "explanation": "Это полезная фраза для живого общения.",
+            },
+            {
+                "prompt": "Вернись к теме после паузы.",
+                "answer": "To return to the main point, I think the key issue is balance.",
+                "explanation": "Так можно удерживать структуру разговора.",
+            },
+        ]
+    return [
+        {
+            "prompt": "Переведи: практичное решение.",
+            "answer": "a practical solution",
+            "explanation": "Полезная фраза для обсуждения почти любой темы.",
+        },
+        {
+            "prompt": "Переведи: по моему опыту.",
+            "answer": "in my experience",
+            "explanation": "Так можно естественно начать личный пример.",
+        },
+        {
+            "prompt": "Закончи фразу: This topic is important because ...",
+            "answer": "This topic is important because it affects everyday decisions.",
+            "explanation": "Фраза помогает связать тему и причину.",
+        },
+        {
+            "prompt": "Переведи: сравнить варианты.",
+            "answer": "to compare options",
+            "explanation": "Подходит для аргументации и выбора.",
+        },
+        {
+            "prompt": "Составь фразу с: a clear example.",
+            "answer": "Let me give a clear example.",
+            "explanation": "Эта фраза помогает сделать ответ конкретнее.",
+        },
+    ]
+
+
+def _fallback_drill_prompts_en(topic: str, skill: str) -> list[dict[str, str]]:
+    if skill == "grammar_patterns":
+        return [
+            {
+                "prompt": "Fix the sentence: I think it useful.",
+                "answer": "I think it is useful.",
+                "explanation": "Use is to make a complete clause.",
+            },
+            {
+                "prompt": f"Complete the sentence about {topic}: If I had more time, ...",
+                "answer": "If I had more time, I would explore this topic more deeply.",
+                "explanation": "This uses the second conditional pattern.",
+            },
+            {
+                "prompt": "Fix the sentence: People can to improve it.",
+                "answer": "People can improve it.",
+                "explanation": "After can, use the base verb without to.",
+            },
+            {
+                "prompt": "Make a comparison: This option / better / for me.",
+                "answer": "This option is better for me.",
+                "explanation": "Use is better for a simple comparison.",
+            },
+            {
+                "prompt": "Complete with a reason: I prefer this approach because ...",
+                "answer": "I prefer this approach because it is more practical.",
+                "explanation": "Because connects your opinion to a reason.",
+            },
+        ]
+    if skill == "clarity":
+        return [
+            {
+                "prompt": "Make this clearer: It is good and useful.",
+                "answer": "It is useful because it saves time and reduces stress.",
+                "explanation": "A clear answer gives a concrete reason.",
+            },
+            {
+                "prompt": "Add an example: This matters in real life.",
+                "answer": "This matters in real life, for example when people need to make quick decisions.",
+                "explanation": "For example makes your idea easier to follow.",
+            },
+            {
+                "prompt": "Make this more direct: Maybe it can be not bad.",
+                "answer": "I think it can be helpful in some situations.",
+                "explanation": "More direct wording sounds clearer.",
+            },
+            {
+                "prompt": f"Give an opinion + reason about {topic}.",
+                "answer": "I support this idea because it can solve a practical problem.",
+                "explanation": "Opinion + reason creates a clear structure.",
+            },
+            {
+                "prompt": "Make it shorter: I want to say that my opinion is that this is important.",
+                "answer": "I think this is important.",
+                "explanation": "Shorter wording is often clearer.",
+            },
+        ]
+    return [
+        {
+            "prompt": "Translate or recall: практичное решение.",
+            "answer": "a practical solution",
+            "explanation": "A useful phrase for discussing solutions.",
+        },
+        {
+            "prompt": "Translate or recall: по моему опыту.",
+            "answer": "in my experience",
+            "explanation": "A natural phrase for starting a personal example.",
+        },
+        {
+            "prompt": "Complete: This topic is important because ...",
+            "answer": "This topic is important because it affects everyday decisions.",
+            "explanation": "This connects the topic to a reason.",
+        },
+        {
+            "prompt": "Translate or recall: сравнить варианты.",
+            "answer": "to compare options",
+            "explanation": "Useful for arguments and choices.",
+        },
+        {
+            "prompt": "Use this phrase: a clear example.",
+            "answer": "Let me give a clear example.",
+            "explanation": "This phrase helps make your answer more concrete.",
+        },
+    ]
 
 
 def fallback_progress_insight(language: str | None, progress_data: dict[str, Any]) -> ProgressInsight:

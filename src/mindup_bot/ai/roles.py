@@ -6,9 +6,11 @@ from typing import Any
 from mindup_bot.ai.gemini import GeminiGateway
 from mindup_bot.ai.schemas import (
     Feedback,
+    SkillDrill,
     MemoryUpdate,
     ProgressInsight,
     TopicChoice,
+    TopicVocabulary,
     TranslationResult,
     TutorReply,
     VocabularyUpdate,
@@ -284,6 +286,88 @@ For each phrase, write translation and note in {target_language}.
             prompt=prompt,
             schema=VocabularyUpdate,
             temperature=0.25,
+        )
+
+
+class TopicVocabularyBuilder:
+    system_instruction = """
+You create compact topic vocabulary previews for English speaking practice.
+Pick practical words, collocations, and short sentence chunks that help the learner discuss the topic.
+Avoid rare terms. Keep examples natural and useful for A2-B2 learners.
+""".strip()
+
+    def __init__(self, gemini: GeminiGateway) -> None:
+        self._gemini = gemini
+
+    async def build(
+        self,
+        *,
+        profile: dict[str, Any],
+        session: dict[str, Any],
+        language: str,
+    ) -> TopicVocabulary:
+        target_language = "Russian" if language == "ru" else "English"
+        prompt = f"""
+Profile:
+{_compact_json(_profile_view(profile))}
+
+Topic: {session["topic_title"]}
+Opening question: {session["opening_question"]}
+
+Create 5-10 common words, collocations, or short phrases that the learner can use in this topic.
+Write translations in {target_language}. Keep examples in English.
+""".strip()
+        return await self._gemini.generate_json(
+            system_instruction=self.system_instruction,
+            prompt=prompt,
+            schema=TopicVocabulary,
+            temperature=0.35,
+        )
+
+
+class SkillDrillBuilder:
+    system_instruction = """
+You create short targeted English practice drills after a speaking session.
+Focus on the learner's weakest feedback category and the session topic.
+Each task must be test-like, practical, and answerable without extra context.
+""".strip()
+
+    def __init__(self, gemini: GeminiGateway) -> None:
+        self._gemini = gemini
+
+    async def build(
+        self,
+        *,
+        profile: dict[str, Any],
+        session: dict[str, Any],
+        feedback: Feedback,
+        skill: str,
+        language: str,
+    ) -> SkillDrill:
+        target_language = "Russian" if language == "ru" else "English"
+        prompt = f"""
+Profile:
+{_compact_json(_profile_view(profile))}
+
+Topic: {session["topic_title"]}
+Opening question: {session["opening_question"]}
+
+Feedback:
+{feedback.model_dump_json()}
+
+Weakest skill to train: {skill}
+
+Create 5-10 short test tasks for this skill and this topic.
+For vocabulary: translate-back, choose a better word, or complete a phrase.
+For grammar patterns: transform sentences or fill a missing structure.
+For clarity/communicative ability: rewrite vague answers into clearer English.
+Write prompts and explanations in {target_language}. Keep answers in English.
+""".strip()
+        return await self._gemini.generate_json(
+            system_instruction=self.system_instruction,
+            prompt=prompt,
+            schema=SkillDrill,
+            temperature=0.35,
         )
 
 

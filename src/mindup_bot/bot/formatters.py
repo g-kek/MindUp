@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mindup_bot.ai.schemas import Feedback, ProgressInsight
+from mindup_bot.ai.schemas import Feedback, ProgressInsight, SkillDrill, TopicVocabulary
 
 GOAL_LABELS = {
     "ru": {
@@ -314,6 +314,31 @@ def format_vocabulary(items: list[dict], language: str | None = "ru") -> str:
 
     title = "📚 Vocabulary" if language == "en" else "📚 Словарь"
     return f"{title}\n━━━━━━━━━━━━\n\n" + "\n\n".join(lines)
+
+
+def format_topic_vocabulary(vocabulary: TopicVocabulary, language: str | None = "ru") -> str:
+    title = "Words for this topic" if language == "en" else "Слова по теме"
+    lines = []
+    for index, item in enumerate(vocabulary.items, start=1):
+        lines.append(
+            f"{index}. {item.phrase}\n"
+            f"   {item.translation}\n"
+            f"   {item.example}"
+        )
+    return f"📚 {title}: {vocabulary.title}\n━━━━━━━━━━━━\n\n" + "\n\n".join(lines)
+
+
+def format_skill_drill(drill: SkillDrill, language: str | None = "ru") -> str:
+    title = "Targeted practice" if language == "en" else "Точечная тренировка"
+    answer_label = "Answer" if language == "en" else "Ответ"
+    lines = []
+    for index, task in enumerate(drill.tasks, start=1):
+        lines.append(
+            f"{index}. {task.prompt}\n"
+            f"{answer_label}: {task.answer}\n"
+            f"{task.explanation}"
+        )
+    return f"🎯 {title}: {drill.title}\n━━━━━━━━━━━━\n\n" + "\n\n".join(lines)
 
 
 def format_help(language: str | None = "ru") -> str:

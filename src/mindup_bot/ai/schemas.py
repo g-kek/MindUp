@@ -73,3 +73,26 @@ class VocabularyPhrase(BaseModel):
 
 class VocabularyUpdate(BaseModel):
     phrases: list[VocabularyPhrase] = Field(default_factory=list, max_length=8)
+
+
+class TopicVocabularyItem(BaseModel):
+    phrase: str = Field(description="Useful English word, collocation, or short phrase for the topic")
+    translation: str = Field(description="Translation in the user's interface language")
+    example: str = Field(description="Short English example sentence")
+
+
+class TopicVocabulary(BaseModel):
+    title: str = Field(description="Short title for the vocabulary list")
+    items: list[TopicVocabularyItem] = Field(min_length=5, max_length=10)
+
+
+class DrillTask(BaseModel):
+    prompt: str = Field(description="Short test prompt in the user's interface language")
+    answer: str = Field(description="Correct English answer or model answer")
+    explanation: str = Field(description="Brief explanation in the user's interface language")
+
+
+class SkillDrill(BaseModel):
+    skill: str = Field(description="Target skill: vocabulary, grammar, clarity, communicative ability, etc.")
+    title: str = Field(description="Short drill title in the user's interface language")
+    tasks: list[DrillTask] = Field(min_length=5, max_length=10)

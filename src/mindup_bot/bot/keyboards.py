@@ -250,7 +250,10 @@ def practice_message_keyboard(message_id: int, language: str | None = "ru") -> I
     if language == "en":
         return InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("Translate", callback_data=f"practice:translate:{message_id}")],
+                [
+                    InlineKeyboardButton("Translate", callback_data=f"practice:translate:{message_id}"),
+                    InlineKeyboardButton("Topic words", callback_data=f"practice:topic_words:{message_id}"),
+                ],
                 [
                     InlineKeyboardButton("Finish", callback_data="practice:finish"),
                     InlineKeyboardButton("Menu", callback_data="practice:menu"),
@@ -259,7 +262,10 @@ def practice_message_keyboard(message_id: int, language: str | None = "ru") -> I
         )
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("Перевести", callback_data=f"practice:translate:{message_id}")],
+            [
+                InlineKeyboardButton("Перевести", callback_data=f"practice:translate:{message_id}"),
+                InlineKeyboardButton("Слова по теме", callback_data=f"practice:topic_words:{message_id}"),
+            ],
             [
                 InlineKeyboardButton("Завершить", callback_data="practice:finish"),
                 InlineKeyboardButton("Меню", callback_data="practice:menu"),
@@ -281,4 +287,19 @@ def first_session_keyboard(language: str | None = "ru") -> InlineKeyboardMarkup:
             [InlineKeyboardButton("Начать первую практику", callback_data="welcome:practice")],
             [InlineKeyboardButton("Выбрать свою тему", callback_data="welcome:custom_topic")],
         ]
+    )
+
+
+def skill_drill_keyboard(
+    session_id: int,
+    skill_slug: str,
+    skill_label: str,
+    language: str | None = "ru",
+) -> InlineKeyboardMarkup:
+    if language == "en":
+        label = f"Train {skill_label}"
+    else:
+        label = f"Потренировать: {skill_label}"
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(label, callback_data=f"drill:start:{session_id}:{skill_slug}")]]
     )

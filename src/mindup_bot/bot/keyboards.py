@@ -13,7 +13,7 @@ CUSTOM_TOPIC_LABEL = "✍️ Своя тема"
 VOCABULARY_LABEL = "📚 Словарь"
 VOCABULARY_REVIEW_LABEL = "🔁 Повторить"
 SUPPORT_LABEL = "🛟 Поддержка"
-FEEDBACK_LABEL = "💬 Feedback"
+FEEDBACK_LABEL = "💬 Отзыв"
 
 START_PRACTICE_LABEL_EN = "🚀 Start practice"
 PROFILE_LABEL_EN = "📊 My profile"
@@ -122,6 +122,13 @@ VOICE_OPTIONS = [
     ("Ryan · UK male", "en-GB-RyanNeural"),
 ]
 
+VOICE_OPTIONS_RU = [
+    ("Jenny · США, женский", "en-US-JennyNeural"),
+    ("Guy · США, мужской", "en-US-GuyNeural"),
+    ("Sonia · Британия, женский", "en-GB-SoniaNeural"),
+    ("Ryan · Британия, мужской", "en-GB-RyanNeural"),
+]
+
 
 def main_menu(language: str | None = "ru") -> ReplyKeyboardMarkup:
     if language == "en":
@@ -170,7 +177,7 @@ def settings_keyboard(language: str | None = "ru") -> InlineKeyboardMarkup:
             [InlineKeyboardButton("📚 Темы", callback_data="settings:edit:topics")],
             [InlineKeyboardButton("🧾 Исправления", callback_data="settings:edit:correction_style")],
             [InlineKeyboardButton("🔔 Напоминание", callback_data="settings:edit:reminder_time")],
-            [InlineKeyboardButton("🔊 Голос бота", callback_data="settings:edit:tts_voice")],
+            [InlineKeyboardButton("🔊 Голосовые сообщения", callback_data="settings:edit:tts_voice")],
             [InlineKeyboardButton("🌐 Язык интерфейса", callback_data="settings:edit:interface_language")],
             [InlineKeyboardButton("⬅️ Назад в меню", callback_data="settings:close")],
         ]
@@ -203,7 +210,7 @@ def settings_options_for(field: str, language: str | None = "ru") -> list[tuple[
     if field == "interface_language":
         return LANGUAGE_OPTIONS
     if field == "tts_voice":
-        return VOICE_OPTIONS
+        return VOICE_OPTIONS if language == "en" else VOICE_OPTIONS_RU
     raise ValueError(f"Unsupported settings field: {field}")
 
 
@@ -232,7 +239,7 @@ def practice_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [[FINISH_LABEL, MENU_LABEL]],
         resize_keyboard=True,
-        input_field_placeholder="Отправь voice или напиши ответ",
+        input_field_placeholder="Отправь голосовое сообщение или напиши ответ",
     )
 
 
@@ -252,7 +259,7 @@ def practice_message_keyboard(message_id: int, language: str | None = "ru") -> I
             [
                 [
                     InlineKeyboardButton("Translate", callback_data=f"practice:translate:{message_id}"),
-                    InlineKeyboardButton("Topic words", callback_data=f"practice:topic_words:{message_id}"),
+                    InlineKeyboardButton("Words & phrases", callback_data=f"practice:topic_words:{message_id}"),
                 ],
                 [
                     InlineKeyboardButton("Finish", callback_data="practice:finish"),
@@ -264,7 +271,7 @@ def practice_message_keyboard(message_id: int, language: str | None = "ru") -> I
         [
             [
                 InlineKeyboardButton("Перевести", callback_data=f"practice:translate:{message_id}"),
-                InlineKeyboardButton("Слова по теме", callback_data=f"practice:topic_words:{message_id}"),
+                InlineKeyboardButton("Слова и фразы", callback_data=f"practice:topic_words:{message_id}"),
             ],
             [
                 InlineKeyboardButton("Завершить", callback_data="practice:finish"),
@@ -287,6 +294,80 @@ def first_session_keyboard(language: str | None = "ru") -> InlineKeyboardMarkup:
             [InlineKeyboardButton("Начать первую практику", callback_data="welcome:practice")],
             [InlineKeyboardButton("Выбрать свою тему", callback_data="welcome:custom_topic")],
         ]
+    )
+
+
+def resume_practice_keyboard(language: str | None = "ru") -> InlineKeyboardMarkup:
+    label = "Return to practice" if language == "en" else "Вернуться к практике"
+    return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data="welcome:practice")]])
+
+
+def vocabulary_pager_keyboard(
+    page: int,
+    total: int,
+    language: str | None = "ru",
+    callback_prefix: str = "vocab:page",
+) -> InlineKeyboardMarkup:
+    safe_total = max(total, 1)
+    safe_page = min(max(page, 0), safe_total - 1)
+    previous_page = safe_page - 1 if safe_page > 0 else safe_total - 1
+    next_page = safe_page + 1 if safe_page + 1 < safe_total else 0
+    counter = f"{safe_page + 1}/{safe_total}"
+    close_label = "Close" if language == "en" else "Закрыть"
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("←", callback_data=f"{callback_prefix}:{previous_page}"),
+                InlineKeyboardButton(counter, callback_data="pager:noop"),
+                InlineKeyboardButton("→", callback_data=f"{callback_prefix}:{next_page}"),
+            ],
+            [InlineKeyboardButton(close_label, callback_data="pager:close")],
+        ]
+    )
+
+
+def short_session_finish_keyboard(language: str | None = "ru") -> InlineKeyboardMarkup:
+    if language == "en":
+        return InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("Keep practicing", callback_data="practice:continue")],
+                [InlineKeyboardButton("Finish without analysis", callback_data="practice:force_finish")],
+            ]
+        )
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("Продолжить разговор", callback_data="practice:continue")],
+            [InlineKeyboardButton("Завершить без анализа", callback_data="practice:force_finish")],
+        ]
+    )
+
+
+def topic_vocabulary_pager_keyboard(
+    message_id: int,
+    page: int,
+    total: int,
+    language: str | None = "ru",
+) -> InlineKeyboardMarkup:
+    return vocabulary_pager_keyboard(
+        page,
+        total,
+        language,
+        callback_prefix=f"topic_vocab:page:{message_id}",
+    )
+
+
+def skill_drill_pager_keyboard(
+    session_id: int,
+    skill_slug: str,
+    page: int,
+    total: int,
+    language: str | None = "ru",
+) -> InlineKeyboardMarkup:
+    return vocabulary_pager_keyboard(
+        page,
+        total,
+        language,
+        callback_prefix=f"drill:page:{session_id}:{skill_slug}",
     )
 
 

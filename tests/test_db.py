@@ -37,6 +37,7 @@ async def test_user_onboarding_and_session_flow(tmp_path: Path) -> None:
     )
     await db.add_message(session_id, "tutor", "How does technology change your work?")
     message_id = await db.add_message(session_id, "user", "It helps me work faster.")
+    last_tutor_id = await db.add_message(session_id, "tutor", "Can you give one example?")
     await db.increment_turn_count(session_id)
 
     active = await db.get_active_session(1)
@@ -44,11 +45,15 @@ async def test_user_onboarding_and_session_flow(tmp_path: Path) -> None:
     assert active["turn_count"] == 1
 
     messages = await db.get_session_messages(session_id)
-    assert [message["role"] for message in messages] == ["tutor", "user"]
+    assert [message["role"] for message in messages] == ["tutor", "user", "tutor"]
 
     user_message = await db.get_message_for_user(message_id, 1)
     assert user_message is not None
     assert user_message["content"] == "It helps me work faster."
+
+    last_tutor = await db.get_last_session_message(session_id, "tutor")
+    assert last_tutor is not None
+    assert last_tutor["id"] == last_tutor_id
 
 
 @pytest.mark.asyncio
@@ -123,6 +128,7 @@ async def test_vocabulary_and_completed_session_progress(tmp_path: Path) -> None
 
     sessions = await db.get_completed_sessions(1)
     vocabulary = await db.get_vocabulary_items(1)
+    session_vocabulary = await db.get_vocabulary_items_for_session(1, session_id)
     review_item = await db.get_vocabulary_review_item(1)
     assert review_item is not None
     await db.set_pending_action(1, "vocab_review", review_item["id"])
@@ -133,6 +139,7 @@ async def test_vocabulary_and_completed_session_progress(tmp_path: Path) -> None
     assert sessions[0]["summary"] == "The user practiced work vocabulary."
     assert sessions[0]["status"] == "completed"
     assert vocabulary[0]["phrase"] == "I tend to agree"
+    assert session_vocabulary[0]["phrase"] == "I tend to agree"
     assert vocabulary[0]["times_seen"] == 2
     assert reviewed is not None
     assert reviewed["times_seen"] == 3
@@ -161,3 +168,28 @@ async def test_contact_messages_are_saved(tmp_path: Path) -> None:
     )
 
     assert message_id > 0
+
+
+@pytest.mark.asyncio
+async def test_close_session_without_analysis_does_not_count_as_completed(tmp_path: Path) -> None:
+    db = Database(tmp_path / "mindup.sqlite3")
+    await db.init()
+    await db.upsert_user(telegram_id=1, chat_id=10, username="u", first_name="User")
+    session_id = await db.create_session(
+        1,
+        {
+            "topic_id": "short",
+            "title": "Short topic",
+            "opening_question": "What do you think?",
+        },
+    )
+
+    await db.close_session_without_analysis(session_id, "Too short for analysis.")
+
+    session = await db.get_session(session_id)
+    progress = await db.get_progress(1)
+
+    assert session is not None
+    assert session["status"] == "skipped"
+    assert session["feedback"] == {}
+    assert progress["completed_count"] == 0

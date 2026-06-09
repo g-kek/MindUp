@@ -76,7 +76,9 @@ class VocabularyUpdate(BaseModel):
 
 
 class TopicVocabularyItem(BaseModel):
-    phrase: str = Field(description="Useful English word, collocation, or short phrase for the topic")
+    phrase: str = Field(
+        description="Useful English word, collocation, sentence starter, or typical conversation phrase"
+    )
     translation: str = Field(description="Translation in the user's interface language")
     example: str = Field(description="Short English example sentence")
 

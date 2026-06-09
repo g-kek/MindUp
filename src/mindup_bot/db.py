@@ -459,6 +459,21 @@ class Database:
             )
             await db.commit()
 
+    async def close_session_without_analysis(self, session_id: int, summary: str) -> None:
+        async with self.connect() as db:
+            await db.execute(
+                """
+                UPDATE sessions
+                SET status = 'skipped',
+                    summary = ?,
+                    feedback_json = '{}',
+                    completed_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (summary, session_id),
+            )
+            await db.commit()
+
     async def add_message(
         self,
         session_id: int,
@@ -507,6 +522,28 @@ class Database:
                 (session_id, limit),
             )
         return [dict(row) for row in rows]
+
+    async def get_last_session_message(
+        self,
+        session_id: int,
+        role: str | None = None,
+    ) -> dict[str, Any] | None:
+        role_filter = "AND role = ?" if role else ""
+        params: tuple[Any, ...] = (session_id, role) if role else (session_id,)
+        async with self.connect() as db:
+            row = await self._fetchone(
+                db,
+                f"""
+                SELECT *
+                FROM session_messages
+                WHERE session_id = ?
+                    {role_filter}
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                params,
+            )
+        return dict(row) if row else None
 
     async def get_recent_memories(self, user_id: int, limit: int = 5) -> list[dict[str, Any]]:
         async with self.connect() as db:
@@ -599,6 +636,27 @@ class Database:
                 LIMIT ?
                 """,
                 (user_id, limit),
+            )
+        return [dict(row) for row in rows]
+
+    async def get_vocabulary_items_for_session(
+        self,
+        user_id: int,
+        session_id: int,
+        limit: int = 30,
+    ) -> list[dict[str, Any]]:
+        async with self.connect() as db:
+            rows = await self._fetchall(
+                db,
+                """
+                SELECT *
+                FROM vocabulary_items
+                WHERE user_id = ?
+                    AND source_session_id = ?
+                ORDER BY last_seen_at DESC, id DESC
+                LIMIT ?
+                """,
+                (user_id, session_id, limit),
             )
         return [dict(row) for row in rows]
 

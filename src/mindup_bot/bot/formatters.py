@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import escape
+
 from mindup_bot.ai.schemas import Feedback, ProgressInsight, SkillDrill, TopicVocabulary
 
 GOAL_LABELS = {
@@ -105,9 +107,9 @@ def format_streak(progress: dict, language: str) -> str:
     practiced_today = bool(streak.get("practiced_today"))
     if language == "en":
         status = "done today" if practiced_today else "not done today"
-        return f"🔥 Streak: {current} days ({status})"
+        return f"🔥 <b>Streak:</b> {current} days ({escape(status)})"
     status = "сегодня выполнено" if practiced_today else "сегодня еще нет"
-    return f"🔥 Серия: {current} дн. ({status})"
+    return f"🔥 <b>Серия:</b> {current} дн. ({escape(status)})"
 
 
 def language_of(user_or_language: dict | str | None) -> str:
@@ -132,36 +134,48 @@ def label_value(kind: str, value: str | None, language: str) -> str:
     return maps[kind][language].get(value, value)
 
 
+def _value(value: object) -> str:
+    return escape(str(value or ""))
+
+
+def _label(label: str, value: object) -> str:
+    return f"<b>{escape(label)}:</b> {_value(value)}"
+
+
 def format_feedback(feedback: Feedback, language: str | None = "ru") -> str:
     phrases = "\n".join(
-        f"- {item.original} -> {item.improved}" for item in feedback.improved_phrases
+        f"• <i>{_value(item.original)}</i> → <b>{_value(item.improved)}</b>"
+        for item in feedback.improved_phrases
     )
-    scores = "\n".join(f"- {item.name}: {item.score}/5 - {item.note}" for item in feedback.scores)
+    scores = "\n".join(
+        f"• <b>{_value(item.name)}:</b> {item.score}/5 - {_value(item.note)}"
+        for item in feedback.scores
+    )
     if language == "en":
         return (
-            "🧾 Session feedback\n"
+            "<b>🧾 Session feedback</b>\n"
             "━━━━━━━━━━━━\n\n"
-            f"📌 Summary: {feedback.summary}\n\n"
-            f"✅ Main strength: {feedback.main_strength}\n\n"
-            f"🎯 Main issue: {feedback.main_issue}\n\n"
-            "💬 Better phrases:\n"
+            f"📌 {_label('Summary', feedback.summary)}\n\n"
+            f"✅ {_label('Main strength', feedback.main_strength)}\n\n"
+            f"🎯 {_label('Main issue', feedback.main_issue)}\n\n"
+            "<b>💬 Better phrases</b>\n"
             f"{phrases}\n\n"
-            f"🏠 Micro-homework: {feedback.micro_homework}\n\n"
-            f"🏆 Estimated CEFR: {feedback.estimated_cefr}\n\n"
-            "📊 Scores:\n"
+            f"🏠 {_label('Micro-homework', feedback.micro_homework)}\n\n"
+            f"🏆 {_label('Estimated CEFR', feedback.estimated_cefr)}\n\n"
+            "<b>📊 Scores</b>\n"
             f"{scores}"
         )
     return (
-        "🧾 Разбор сессии\n"
+        "<b>🧾 Разбор сессии</b>\n"
         "━━━━━━━━━━━━\n\n"
-        f"📌 Итог: {feedback.summary}\n\n"
-        f"✅ Сильная сторона: {feedback.main_strength}\n\n"
-        f"🎯 Главная точка роста: {feedback.main_issue}\n\n"
-        "💬 Фразы лучше:\n"
+        f"📌 {_label('Итог', feedback.summary)}\n\n"
+        f"✅ {_label('Сильная сторона', feedback.main_strength)}\n\n"
+        f"🎯 {_label('Главная точка роста', feedback.main_issue)}\n\n"
+        "<b>💬 Фразы лучше</b>\n"
         f"{phrases}\n\n"
-        f"🏠 Мини-задание: {feedback.micro_homework}\n\n"
-        f"🏆 Примерный CEFR: {feedback.estimated_cefr}\n\n"
-        "📊 Оценки:\n"
+        f"🏠 {_label('Мини-задание', feedback.micro_homework)}\n\n"
+        f"🏆 {_label('Примерный CEFR', feedback.estimated_cefr)}\n\n"
+        "<b>📊 Оценки</b>\n"
         f"{scores}"
     )
 
@@ -181,23 +195,23 @@ def format_profile(user: dict, progress: dict) -> str:
     if completed == 0:
         if language == "en":
             return (
-                f"👤 {display_name}\n\n"
-                f"🏆 Level: {level}\n"
-                "🔥 Sessions: 0\n"
+                f"<b>👤 {_value(display_name)}</b>\n\n"
+                f"🏆 {_label('Level', level)}\n"
+                f"🔥 {_label('Sessions', 0)}\n"
                 f"{format_streak(progress, language)}\n"
-                f"📈 Progress: {progress_bar(0)} 0%\n\n"
-                f"🎯 Goal: {goal}\n"
-                f"📚 Topics: {topics}\n\n"
+                f"📈 {_label('Progress', f'{progress_bar(0)} 0%')}\n\n"
+                f"🎯 {_label('Goal', goal)}\n"
+                f"📚 {_label('Topics', topics)}\n\n"
                 "🚀 Start your first practice so dialogum can collect stats."
             )
         return (
-            f"👤 {display_name}\n\n"
-            f"🏆 Уровень: {level}\n"
-            "🔥 Сессий: 0\n"
+            f"<b>👤 {_value(display_name)}</b>\n\n"
+            f"🏆 {_label('Уровень', level)}\n"
+            f"🔥 {_label('Сессий', 0)}\n"
             f"{format_streak(progress, language)}\n"
-            f"📈 Прогресс: {progress_bar(0)} 0%\n\n"
-            f"🎯 Цель: {goal}\n"
-            f"📚 Темы: {topics}\n\n"
+            f"📈 {_label('Прогресс', f'{progress_bar(0)} 0%')}\n\n"
+            f"🎯 {_label('Цель', goal)}\n"
+            f"📚 {_label('Темы', topics)}\n\n"
             "🚀 Начни первую практику, чтобы dialogum собрал статистику."
         )
 
@@ -207,24 +221,24 @@ def format_profile(user: dict, progress: dict) -> str:
     percent = min(100, completed * 7)
     if language == "en":
         return (
-            f"👤 {display_name}\n\n"
-            f"🏆 Level: {cefr}\n"
-            f"🔥 Sessions: {completed}\n"
+            f"<b>👤 {_value(display_name)}</b>\n\n"
+            f"🏆 {_label('Level', cefr)}\n"
+            f"🔥 {_label('Sessions', completed)}\n"
             f"{format_streak(progress, language)}\n"
-            f"📈 To next level: {progress_bar(percent)} {percent}%\n\n"
-            f"🎯 Goal: {goal}\n"
-            f"📚 Topics: {topics}\n\n"
-            f"🧾 Last session: {summary}"
+            f"📈 {_label('To next level', f'{progress_bar(percent)} {percent}%')}\n\n"
+            f"🎯 {_label('Goal', goal)}\n"
+            f"📚 {_label('Topics', topics)}\n\n"
+            f"🧾 {_label('Last session', summary)}"
         )
     return (
-        f"👤 {display_name}\n\n"
-        f"🏆 Уровень: {cefr}\n"
-        f"🔥 Сессий: {completed}\n"
+        f"<b>👤 {_value(display_name)}</b>\n\n"
+        f"🏆 {_label('Уровень', cefr)}\n"
+        f"🔥 {_label('Сессий', completed)}\n"
         f"{format_streak(progress, language)}\n"
-        f"📈 До следующего уровня: {progress_bar(percent)} {percent}%\n\n"
-        f"🎯 Цель: {goal}\n"
-        f"📚 Темы: {topics}\n\n"
-        f"🧾 Последняя сессия: {summary}"
+        f"📈 {_label('До следующего уровня', f'{progress_bar(percent)} {percent}%')}\n\n"
+        f"🎯 {_label('Цель', goal)}\n"
+        f"📚 {_label('Темы', topics)}\n\n"
+        f"🧾 {_label('Последняя сессия', summary)}"
     )
 
 
@@ -235,55 +249,55 @@ def format_settings(user: dict) -> str:
     ) or ("not set" if language == "en" else "не задано")
     if language == "en":
         return (
-            "⚙️ Settings\n"
+            "<b>⚙️ Settings</b>\n"
             "━━━━━━━━━━━━\n\n"
-            f"🏆 Level: {user.get('english_level') or 'not set'}\n"
-            f"🎯 Goal: {label_value('goal', user.get('goal'), language)}\n"
-            f"📚 Topics: {topics}\n"
-            f"🧾 Corrections: {label_value('correction', user.get('correction_style'), language)}\n"
-            f"🔔 Reminder: {label_value('reminder', user.get('reminder_time'), language)}\n"
-            f"🔊 Bot voice: {label_value('voice', user.get('tts_voice') or 'en-US-JennyNeural', language)}\n"
-            f"🌐 Interface: {label_value('language', user.get('interface_language'), language)}\n\n"
+            f"🏆 {_label('Level', user.get('english_level') or 'not set')}\n"
+            f"🎯 {_label('Goal', label_value('goal', user.get('goal'), language))}\n"
+            f"📚 {_label('Topics', topics)}\n"
+            f"🧾 {_label('Corrections', label_value('correction', user.get('correction_style'), language))}\n"
+            f"🔔 {_label('Reminder', label_value('reminder', user.get('reminder_time'), language))}\n"
+            f"🔊 {_label('Bot voice', label_value('voice', user.get('tts_voice') or 'en-US-JennyNeural', language))}\n"
+            f"🌐 {_label('Interface', label_value('language', user.get('interface_language'), language))}\n\n"
             "Choose what you want to change:"
         )
     return (
-        "⚙️ Настройки\n"
+        "<b>⚙️ Настройки</b>\n"
         "━━━━━━━━━━━━\n\n"
-        f"🏆 Уровень: {user.get('english_level') or 'not set'}\n"
-        f"🎯 Цель: {label_value('goal', user.get('goal'), language)}\n"
-        f"📚 Темы: {topics}\n"
-        f"🧾 Исправления: {label_value('correction', user.get('correction_style'), language)}\n"
-        f"🔔 Напоминание: {label_value('reminder', user.get('reminder_time'), language)}\n"
-        f"🔊 Голос бота: {label_value('voice', user.get('tts_voice') or 'en-US-JennyNeural', language)}\n"
-        f"🌐 Интерфейс: {label_value('language', user.get('interface_language'), language)}\n\n"
+        f"🏆 {_label('Уровень', user.get('english_level') or 'not set')}\n"
+        f"🎯 {_label('Цель', label_value('goal', user.get('goal'), language))}\n"
+        f"📚 {_label('Темы', topics)}\n"
+        f"🧾 {_label('Исправления', label_value('correction', user.get('correction_style'), language))}\n"
+        f"🔔 {_label('Напоминание', label_value('reminder', user.get('reminder_time'), language))}\n"
+        f"🔊 {_label('Голосовые сообщения', label_value('voice', user.get('tts_voice') or 'en-US-JennyNeural', language))}\n"
+        f"🌐 {_label('Интерфейс', label_value('language', user.get('interface_language'), language))}\n\n"
         "Выбери, что хочешь изменить:"
     )
 
 
 def format_progress_insight(insight: ProgressInsight, language: str | None = "ru") -> str:
     if language == "en":
-        achievements = "\n".join(f"- {item}" for item in insight.achievements) or "- Not enough data yet."
+        achievements = "\n".join(f"• {_value(item)}" for item in insight.achievements) or "• Not enough data yet."
         return (
-            "📈 Progress analysis\n"
+            "<b>📈 Progress analysis</b>\n"
             "━━━━━━━━━━━━\n\n"
-            f"📌 Across sessions: {insight.overall_summary}\n\n"
-            f"🔄 Recent change: {insight.recent_change}\n\n"
-            f"🗓 Last 24 hours: {insight.last_day_summary}\n\n"
-            "✅ Wins:\n"
+            f"📌 {_label('Across sessions', insight.overall_summary)}\n\n"
+            f"🔄 {_label('Recent change', insight.recent_change)}\n\n"
+            f"🗓 {_label('Last 24 hours', insight.last_day_summary)}\n\n"
+            "<b>✅ Wins</b>\n"
             f"{achievements}\n\n"
-            f"🎯 Next focus: {insight.next_focus}"
+            f"🎯 {_label('Next focus', insight.next_focus)}"
         )
 
-    achievements = "\n".join(f"- {item}" for item in insight.achievements) or "- Пока мало данных."
+    achievements = "\n".join(f"• {_value(item)}" for item in insight.achievements) or "• Пока мало данных."
     return (
-        "📈 Анализ прогресса\n"
+        "<b>📈 Анализ прогресса</b>\n"
         "━━━━━━━━━━━━\n\n"
-        f"📌 По сессиям: {insight.overall_summary}\n\n"
-        f"🔄 Последнее изменение: {insight.recent_change}\n\n"
-        f"🗓 За 24 часа: {insight.last_day_summary}\n\n"
-        "✅ Что закрепилось:\n"
+        f"📌 {_label('По сессиям', insight.overall_summary)}\n\n"
+        f"🔄 {_label('Последнее изменение', insight.recent_change)}\n\n"
+        f"🗓 {_label('За 24 часа', insight.last_day_summary)}\n\n"
+        "<b>✅ Что закрепилось</b>\n"
         f"{achievements}\n\n"
-        f"🎯 Следующий фокус: {insight.next_focus}"
+        f"🎯 {_label('Следующий фокус', insight.next_focus)}"
     )
 
 
@@ -291,12 +305,12 @@ def format_vocabulary(items: list[dict], language: str | None = "ru") -> str:
     if not items:
         if language == "en":
             return (
-                "📚 Vocabulary\n"
+                "<b>📚 Vocabulary</b>\n"
                 "━━━━━━━━━━━━\n\n"
                 "No saved phrases yet. Finish a practice session to collect useful phrases."
             )
         return (
-            "📚 Словарь\n"
+            "<b>📚 Словарь</b>\n"
             "━━━━━━━━━━━━\n\n"
             "Пока нет сохраненных фраз. Заверши практику, чтобы собрать полезные выражения."
         )
@@ -308,24 +322,76 @@ def format_vocabulary(items: list[dict], language: str | None = "ru") -> str:
         note = item.get("note") or ""
         times_seen = item.get("times_seen") or 1
         if note:
-            lines.append(f"{index}. {phrase}\n   {translation}\n   {note} · x{times_seen}")
+            lines.append(
+                f"<b>{index}. {_value(phrase)}</b>\n"
+                f"{_label('Перевод' if language != 'en' else 'Translation', translation)}\n"
+                f"{_label('Заметка' if language != 'en' else 'Note', note)} · x{times_seen}"
+            )
         else:
-            lines.append(f"{index}. {phrase}\n   {translation} · x{times_seen}")
+            lines.append(
+                f"<b>{index}. {_value(phrase)}</b>\n"
+                f"{_label('Перевод' if language != 'en' else 'Translation', translation)} · x{times_seen}"
+            )
 
     title = "📚 Vocabulary" if language == "en" else "📚 Словарь"
-    return f"{title}\n━━━━━━━━━━━━\n\n" + "\n\n".join(lines)
+    return f"<b>{escape(title)}</b>\n━━━━━━━━━━━━\n\n" + "\n\n".join(lines)
+
+
+def format_vocabulary_card(items: list[dict], page: int, language: str | None = "ru") -> str:
+    if not items:
+        return format_vocabulary(items, language)
+
+    safe_page = _safe_page(page, len(items))
+    item = items[safe_page]
+    phrase = item.get("phrase") or ""
+    translation = item.get("translation") or ("no translation" if language == "en" else "без перевода")
+    note = item.get("note") or ""
+    times_seen = item.get("times_seen") or 1
+    title = "📚 Vocabulary" if language == "en" else "📚 Словарь"
+    translation_label = "Translation" if language == "en" else "Перевод"
+    note_label = "Note / example" if language == "en" else "Заметка / пример"
+    seen_label = "Seen" if language == "en" else "Повторений"
+
+    parts = [
+        f"<b>{escape(title)}</b>\n━━━━━━━━━━━━",
+        f"<b>{_value(phrase)}</b>",
+        _label(translation_label, translation),
+    ]
+    if note:
+        parts.append(_label(note_label, note))
+    parts.append(_label(seen_label, f"x{times_seen}"))
+    return "\n\n".join(parts)
 
 
 def format_topic_vocabulary(vocabulary: TopicVocabulary, language: str | None = "ru") -> str:
-    title = "Words for this topic" if language == "en" else "Слова по теме"
+    title = "Words and phrases for this topic" if language == "en" else "Слова и фразы по теме"
     lines = []
     for index, item in enumerate(vocabulary.items, start=1):
         lines.append(
-            f"{index}. {item.phrase}\n"
-            f"   {item.translation}\n"
-            f"   {item.example}"
+            f"<b>{index}. {_value(item.phrase)}</b>\n"
+            f"{_label('Перевод' if language != 'en' else 'Translation', item.translation)}\n"
+            f"{_label('Пример' if language != 'en' else 'Example', item.example)}"
         )
-    return f"📚 {title}: {vocabulary.title}\n━━━━━━━━━━━━\n\n" + "\n\n".join(lines)
+    return f"<b>📚 {escape(title)}: {_value(vocabulary.title)}</b>\n━━━━━━━━━━━━\n\n" + "\n\n".join(lines)
+
+
+def format_topic_vocabulary_card(
+    vocabulary: TopicVocabulary,
+    page: int,
+    language: str | None = "ru",
+) -> str:
+    safe_page = _safe_page(page, len(vocabulary.items))
+    item = vocabulary.items[safe_page]
+    title = "Words and phrases for this topic" if language == "en" else "Слова и фразы по теме"
+    translation_label = "Translation" if language == "en" else "Перевод"
+    example_label = "Example" if language == "en" else "Пример"
+    return (
+        f"<b>📚 {escape(title)}: {_value(vocabulary.title)}</b>\n"
+        "━━━━━━━━━━━━\n\n"
+        f"<b>{_value(item.phrase)}</b>\n\n"
+        f"{_label(translation_label, item.translation)}\n\n"
+        f"{_label(example_label, item.example)}"
+    )
 
 
 def format_skill_drill(drill: SkillDrill, language: str | None = "ru") -> str:
@@ -334,30 +400,115 @@ def format_skill_drill(drill: SkillDrill, language: str | None = "ru") -> str:
     lines = []
     for index, task in enumerate(drill.tasks, start=1):
         lines.append(
-            f"{index}. {task.prompt}\n"
-            f"{answer_label}: {task.answer}\n"
-            f"{task.explanation}"
+            f"<b>{index}. {_value(task.prompt)}</b>\n"
+            f"{_label(answer_label, task.answer)}\n"
+            f"{_value(task.explanation)}"
         )
-    return f"🎯 {title}: {drill.title}\n━━━━━━━━━━━━\n\n" + "\n\n".join(lines)
+    return f"<b>🎯 {escape(title)}: {_value(drill.title)}</b>\n━━━━━━━━━━━━\n\n" + "\n\n".join(lines)
+
+
+def format_skill_drill_card(drill: SkillDrill, page: int, language: str | None = "ru") -> str:
+    safe_page = _safe_page(page, len(drill.tasks))
+    task = drill.tasks[safe_page]
+    title = "Targeted practice" if language == "en" else "Точечная тренировка"
+    prompt_label = "Task" if language == "en" else "Задание"
+    answer_label = "Tap to reveal the answer" if language == "en" else "Нажми, чтобы открыть ответ"
+    explanation_label = "Why it works" if language == "en" else "Почему так"
+    return (
+        f"<b>🎯 {escape(title)}: {escape(drill.title)}</b>\n"
+        "━━━━━━━━━━━━\n\n"
+        f"<b>{escape(prompt_label)}</b>\n"
+        f"{escape(task.prompt)}\n\n"
+        f"<b>{escape(answer_label)}</b>\n"
+        f"<tg-spoiler>{escape(task.answer)}</tg-spoiler>\n\n"
+        f"<b>{escape(explanation_label)}</b>\n"
+        f"{escape(task.explanation)}"
+    )
+
+
+def format_short_session_warning(language: str | None = "ru") -> str:
+    if language == "en":
+        return (
+            "<b>🟡 Not enough dialogue yet</b>\n"
+            "━━━━━━━━━━━━\n\n"
+            "Send at least two messages in this speaking session so I can make a useful analysis.\n\n"
+            "<b>You can still finish now</b>, but I will close the session without feedback, vocabulary, or drills."
+        )
+    return (
+        "<b>🟡 Пока мало диалога</b>\n"
+        "━━━━━━━━━━━━\n\n"
+        "Отправь хотя бы два сообщения в этой speaking-сессии, чтобы я смог сделать полезный разбор.\n\n"
+        "<b>Можно завершить сейчас</b>, но тогда сессия закроется без анализа, словаря и тренировки."
+    )
+
+
+def format_no_analysis_finished(language: str | None = "ru") -> str:
+    if language == "en":
+        return (
+            "<b>✅ Session closed</b>\n"
+            "━━━━━━━━━━━━\n\n"
+            "Analysis was skipped because there were fewer than two user messages."
+        )
+    return (
+        "<b>✅ Сессия закрыта</b>\n"
+        "━━━━━━━━━━━━\n\n"
+        "Анализ пропущен: в сессии было меньше двух сообщений пользователя."
+    )
+
+
+def format_processing_status(step: int, language: str | None = "ru") -> str:
+    safe_step = max(1, min(step, 4))
+    bar = "▰" * safe_step + "▱" * (4 - safe_step)
+    if language == "en":
+        labels = {
+            1: "Reading the dialogue",
+            2: "Analyzing speaking quality",
+            3: "Saving useful phrases",
+            4: "Preparing the result",
+        }
+        return (
+            "<b>⏳ Processing your session</b>\n"
+            "━━━━━━━━━━━━\n\n"
+            f"{bar}\n"
+            f"{labels[safe_step]}..."
+        )
+    labels = {
+        1: "Читаю диалог",
+        2: "Анализирую речь",
+        3: "Сохраняю полезные фразы",
+        4: "Готовлю результат",
+    }
+    return (
+        "<b>⏳ Обрабатываю сессию</b>\n"
+        "━━━━━━━━━━━━\n\n"
+        f"{bar}\n"
+        f"{labels[safe_step]}..."
+    )
 
 
 def format_help(language: str | None = "ru") -> str:
     if language == "en":
         return (
-            "📖 What can dialogum do?\n"
+            "<b>📖 What can dialogum do?</b>\n"
             "━━━━━━━━━━━━\n\n"
-            "🎙 Gives you a short English speaking task.\n"
-            "💬 Leads a short dialogue with follow-up questions.\n"
-            "🧾 Shows mistakes and better phrases after the session.\n"
-            "🧠 Remembers your goals, topics, and recurring weak spots.\n\n"
-            "Format: 10 minutes a day, voice or text."
+            "🎙 <b>Practice:</b> gives you a short English speaking task.\n"
+            "💬 <b>Dialogue:</b> leads a short conversation with follow-up questions.\n"
+            "🧾 <b>Feedback:</b> shows mistakes and better phrases after the session.\n"
+            "🧠 <b>Memory:</b> remembers goals, topics, and recurring weak spots.\n\n"
+            "<b>Format:</b> 10 minutes a day, voice or text."
         )
     return (
-        "📖 Что умеет dialogum?\n"
+        "<b>📖 Что умеет dialogum?</b>\n"
         "━━━━━━━━━━━━\n\n"
-        "🎙 Дает короткое speaking-задание на английском.\n"
-        "💬 Ведет диалог и задает уточняющие вопросы.\n"
-        "🧾 После сессии показывает ошибки и улучшенные фразы.\n"
-        "🧠 Запоминает цели, темы и типичные слабые места.\n\n"
-        "Формат: 10 минут в день, voice или текст."
+        "🎙 <b>Практика:</b> дает короткое speaking-задание на английском.\n"
+        "💬 <b>Диалог:</b> ведет разговор и задает уточняющие вопросы.\n"
+        "🧾 <b>Разбор:</b> после сессии показывает ошибки и улучшенные фразы.\n"
+        "🧠 <b>Память:</b> запоминает цели, темы и типичные слабые места.\n\n"
+        "<b>Формат:</b> 10 минут в день, голосовое сообщение или текст."
     )
+
+
+def _safe_page(page: int, total: int) -> int:
+    if total <= 0:
+        return 0
+    return min(max(page, 0), total - 1)

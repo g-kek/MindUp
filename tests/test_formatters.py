@@ -3,10 +3,14 @@ from mindup_bot.bot.formatters import (
     format_feedback,
     format_profile,
     format_progress_insight,
+    format_processing_status,
     format_settings,
     format_skill_drill,
+    format_skill_drill_card,
     format_topic_vocabulary,
+    format_topic_vocabulary_card,
     format_vocabulary,
+    format_vocabulary_card,
 )
 
 
@@ -33,9 +37,9 @@ def test_format_feedback_contains_core_sections() -> None:
 
     text = format_feedback(feedback)
 
-    assert "🧾 Разбор сессии" in text
-    assert "🏆 Примерный CEFR: B1" in text
-    assert "I think it good -> I think it is useful." in text
+    assert "<b>🧾 Разбор сессии</b>" in text
+    assert "<b>Примерный CEFR:</b> B1" in text
+    assert "<i>I think it good</i> → <b>I think it is useful.</b>" in text
 
 
 def test_format_settings_uses_interface_language() -> None:
@@ -51,7 +55,7 @@ def test_format_settings_uses_interface_language() -> None:
 
     text = format_settings(user)
 
-    assert "⚙️ Settings" in text
+    assert "<b>⚙️ Settings</b>" in text
     assert "Speaking confidence" in text
     assert "Technology" in text
     assert "No reminders" in text
@@ -76,6 +80,21 @@ def test_format_vocabulary_lists_saved_phrases() -> None:
     assert "I tend to agree" in text
     assert "я скорее согласен" in text
     assert "x2" in text
+
+    card = format_vocabulary_card(
+        [
+            {
+                "phrase": "I tend to agree",
+                "translation": "я скорее согласен",
+                "note": "Useful soft opinion.",
+                "times_seen": 2,
+            }
+        ],
+        0,
+        "ru",
+    )
+    assert "1/1" not in card
+    assert "<b>Заметка / пример:</b> Useful soft opinion." in card
 
 
 def test_format_progress_insight_uses_language() -> None:
@@ -110,7 +129,7 @@ def test_format_profile_includes_daily_streak() -> None:
 
     text = format_profile(user, progress)
 
-    assert "🔥 Серия: 3 дн. (сегодня выполнено)" in text
+    assert "🔥 <b>Серия:</b> 3 дн. (сегодня выполнено)" in text
 
 
 def test_format_topic_vocabulary_contains_examples() -> None:
@@ -149,9 +168,13 @@ def test_format_topic_vocabulary_contains_examples() -> None:
 
     text = format_topic_vocabulary(vocabulary, "ru")
 
-    assert "📚 Слова по теме" in text
+    assert "📚 Слова и фразы по теме" in text
     assert "to stay focused" in text
     assert "I try to stay focused in the morning." in text
+
+    card = format_topic_vocabulary_card(vocabulary, 0, "ru")
+    assert "1/5" not in card
+    assert "<b>Перевод:</b> оставаться сфокусированным" in card
 
 
 def test_format_skill_drill_contains_tasks() -> None:
@@ -191,5 +214,16 @@ def test_format_skill_drill_contains_tasks() -> None:
 
     text = format_skill_drill(drill, "ru")
 
-    assert "🎯 Точечная тренировка" in text
-    assert "Ответ: a practical solution" in text
+    assert "<b>🎯 Точечная тренировка" in text
+    assert "<b>Ответ:</b> a practical solution" in text
+
+    card = format_skill_drill_card(drill, 0, "ru")
+    assert "<tg-spoiler>a practical solution</tg-spoiler>" in card
+    assert "<b>Задание</b>" in card
+
+
+def test_format_processing_status_has_progress_bar() -> None:
+    text = format_processing_status(2, "ru")
+
+    assert "<b>⏳ Обрабатываю сессию</b>" in text
+    assert "▰▰▱▱" in text

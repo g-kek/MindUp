@@ -292,7 +292,8 @@ For each phrase, write translation and note in {target_language}.
 class TopicVocabularyBuilder:
     system_instruction = """
 You create compact topic vocabulary previews for English speaking practice.
-Pick practical words, collocations, and short sentence chunks that help the learner discuss the topic.
+Pick practical words, collocations, sentence starters, and typical conversational phrases
+that help the learner discuss the topic out loud.
 Avoid rare terms. Keep examples natural and useful for A2-B2 learners.
 """.strip()
 
@@ -314,7 +315,10 @@ Profile:
 Topic: {session["topic_title"]}
 Opening question: {session["opening_question"]}
 
-Create 5-10 common words, collocations, or short phrases that the learner can use in this topic.
+Create 5-10 useful items for this topic.
+Include both common words/collocations and typical conversational phrases or sentence frames.
+Prefer items the learner can immediately say in a dialogue, for example "In my experience...",
+"One reason is that...", "Could you explain what you mean by...".
 Write translations in {target_language}. Keep examples in English.
 """.strip()
         return await self._gemini.generate_json(

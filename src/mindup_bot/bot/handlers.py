@@ -4,10 +4,11 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
+from html import escape
 from typing import Any
 
-from telegram import Update
-from telegram.constants import ChatAction
+from telegram import ReplyKeyboardRemove, Update
+from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest
 from telegram.ext import (
     Application,
@@ -44,11 +45,15 @@ from mindup_bot.bot.formatters import (
     format_help,
     format_profile,
     format_progress_insight,
+    format_processing_status,
     format_settings,
-    format_skill_drill,
+    format_skill_drill_card,
+    format_no_analysis_finished,
+    format_short_session_warning,
     format_streak,
-    format_topic_vocabulary,
+    format_topic_vocabulary_card,
     format_vocabulary,
+    format_vocabulary_card,
 )
 from mindup_bot.bot.keyboards import (
     CORRECTION_OPTIONS,
@@ -87,7 +92,11 @@ from mindup_bot.bot.keyboards import (
     settings_option_keyboard,
     settings_options_for,
     skill_drill_keyboard,
+    skill_drill_pager_keyboard,
+    short_session_finish_keyboard,
+    topic_vocabulary_pager_keyboard,
     topics_keyboard,
+    vocabulary_pager_keyboard,
 )
 from mindup_bot.bot.reminders import schedule_user_reminder
 from mindup_bot.config import Settings
@@ -139,7 +148,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.effective_message.reply_text(
         "Чтобы начать — пройди короткую настройку. Это займет 3 минуты 🎯",
-        reply_markup=main_menu(user.get("interface_language")),
+        reply_markup=ReplyKeyboardRemove(),
     )
     await ask_onboarding_step(update, context, "english_level", user.get("onboarding_data", {}))
 
@@ -147,6 +156,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = await ensure_user(update, context)
     language = user.get("interface_language")
+    if not user["onboarding_completed"]:
+        message = "Let's finish the quick setup first." if language == "en" else (
+            "Сначала закончим короткую настройку."
+        )
+        await update.effective_message.reply_text(message, reply_markup=ReplyKeyboardRemove())
+        await ask_onboarding_step(
+            update,
+            context,
+            user.get("onboarding_step") or "english_level",
+            user.get("onboarding_data") or {},
+        )
+        return
+
     text = "🏠 dialogum menu\n\nChoose an action:" if language == "en" else (
         "🏠 Меню dialogum\n\nВыбери действие:"
     )
@@ -182,7 +204,8 @@ async def progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.effective_message.reply_text(
         f"{format_profile(user, data)}\n\n{format_progress_insight(insight, language)}",
-        reply_markup=main_menu(user.get("interface_language")),
+        reply_markup=await main_menu_reply_markup(context, user),
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -220,16 +243,29 @@ async def custom_topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if language == "en"
         else "Напиши тему, которую хочешь обсудить. Достаточно одной фразы."
     )
-    await update.effective_message.reply_text(message, reply_markup=main_menu(language))
+    await update.effective_message.reply_text(
+        message,
+        reply_markup=await main_menu_reply_markup(context, user),
+    )
 
 
 async def vocabulary(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = await ensure_user(update, context)
     db: Database = context.application.bot_data["db"]
-    items = await db.get_vocabulary_items(user["telegram_id"], limit=30)
+    language = user.get("interface_language")
+    items = await db.get_vocabulary_items(user["telegram_id"], limit=50)
+    if not items:
+        await update.effective_message.reply_text(
+            format_vocabulary(items, language),
+            reply_markup=await main_menu_reply_markup(context, user),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
     await update.effective_message.reply_text(
-        format_vocabulary(items, user.get("interface_language")),
-        reply_markup=main_menu(user.get("interface_language")),
+        format_vocabulary_card(items, 0, language),
+        reply_markup=vocabulary_pager_keyboard(0, len(items), language),
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -244,7 +280,10 @@ async def vocabulary_review(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             if language == "en"
             else "Пока нет сохраненных фраз. Сначала заверши практику."
         )
-        await update.effective_message.reply_text(message, reply_markup=main_menu(language))
+        await update.effective_message.reply_text(
+            message,
+            reply_markup=await main_menu_reply_markup(context, user),
+        )
         return
 
     await db.set_pending_action(user["telegram_id"], "vocab_review", item["id"])
@@ -261,7 +300,10 @@ async def vocabulary_review(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             "🔁 Повторение словаря\n\n"
             f"Напиши эту фразу на английском:\n{clue}"
         )
-    await update.effective_message.reply_text(message, reply_markup=main_menu(language))
+    await update.effective_message.reply_text(
+        message,
+        reply_markup=await main_menu_reply_markup(context, user),
+    )
 
 
 async def support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -272,7 +314,10 @@ async def support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = "Write your support request in one message. We will contact you."
     else:
         message = "Напиши обращение в поддержку одним сообщением. Мы с тобой свяжемся."
-    await update.effective_message.reply_text(message, reply_markup=main_menu(user.get("interface_language")))
+    await update.effective_message.reply_text(
+        message,
+        reply_markup=await main_menu_reply_markup(context, user),
+    )
 
 
 async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -282,8 +327,11 @@ async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if user.get("interface_language") == "en":
         message = "Write your feedback in one message."
     else:
-        message = "Напиши feedback одним сообщением."
-    await update.effective_message.reply_text(message, reply_markup=main_menu(user.get("interface_language")))
+        message = "Напиши отзыв одним сообщением."
+    await update.effective_message.reply_text(
+        message,
+        reply_markup=await main_menu_reply_markup(context, user),
+    )
 
 
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -291,6 +339,7 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(
         format_settings(user),
         reply_markup=settings_keyboard(user.get("interface_language")),
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -298,11 +347,20 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     user = await ensure_user(update, context)
     await update.effective_message.reply_text(
         format_help(user.get("interface_language")),
-        reply_markup=main_menu(user.get("interface_language")),
+        reply_markup=await main_menu_reply_markup(context, user),
+        parse_mode=ParseMode.HTML,
     )
 
 
 async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await finish_active_session(update, context, force_without_analysis=False)
+
+
+async def finish_active_session(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    force_without_analysis: bool = False,
+) -> None:
     user = await ensure_user(update, context)
     db: Database = context.application.bot_data["db"]
     session = await db.get_active_session(user["telegram_id"])
@@ -312,10 +370,23 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         await update.effective_message.reply_text(
             message,
-            reply_markup=main_menu(user.get("interface_language")),
+            reply_markup=await main_menu_reply_markup(context, user),
         )
         return
-    await finish_session(update, context, user, session)
+    messages = await db.get_session_messages(session["id"], limit=40)
+    user_message_count = count_user_messages(messages)
+    language = user.get("interface_language")
+    if user_message_count < 2 and not force_without_analysis:
+        await update.effective_message.reply_text(
+            format_short_session_warning(language),
+            reply_markup=short_session_finish_keyboard(language),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    if force_without_analysis:
+        await finish_session_without_analysis(update, context, user, session)
+        return
+    await finish_session(update, context, user, session, messages=messages)
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -336,6 +407,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await settings(update, context)
         elif action == "help":
             await help_command(update, context)
+        return
+
+    if data.startswith("pager:"):
+        await handle_pager_callback(update, data)
+        return
+
+    if data.startswith("vocab:"):
+        await handle_vocabulary_callback(update, context, user, data)
+        return
+
+    if data.startswith("topic_vocab:"):
+        await handle_topic_vocabulary_callback(update, context, user, data)
         return
 
     if data.startswith("welcome:"):
@@ -394,6 +477,19 @@ async def handle_practice_callback(
         await finish(update, context)
         return
 
+    if action == "force_finish":
+        await query.answer()
+        await query.edit_message_reply_markup(reply_markup=None)
+        await finish_active_session(update, context, force_without_analysis=True)
+        return
+
+    if action == "continue":
+        await query.answer(
+            "Keep practicing" if language == "en" else "Продолжаем практику"
+        )
+        await query.edit_message_reply_markup(reply_markup=None)
+        return
+
     if action == "menu":
         await query.answer()
         await menu(update, context)
@@ -437,7 +533,17 @@ async def handle_practice_callback(
                 for item in topic_vocabulary.items
             ],
         )
-        await query.message.reply_text(format_topic_vocabulary(topic_vocabulary, language))
+        cache_topic_vocabulary(context, message_id, topic_vocabulary)
+        await query.message.reply_text(
+            format_topic_vocabulary_card(topic_vocabulary, 0, language),
+            reply_markup=topic_vocabulary_pager_keyboard(
+                message_id,
+                0,
+                len(topic_vocabulary.items),
+                language,
+            ),
+            parse_mode=ParseMode.HTML,
+        )
         return
 
     if action == "translate" and len(parts) >= 3:
@@ -474,7 +580,111 @@ async def handle_practice_callback(
             )
 
         title = "Translation" if language == "en" else "Перевод"
-        await query.message.reply_text(f"🔎 {title}\n\n{text}")
+        await query.message.reply_text(
+            f"<b>🔎 {escape(title)}</b>\n\n{escape(text)}",
+            parse_mode=ParseMode.HTML,
+        )
+
+
+async def handle_pager_callback(update: Update, callback_data: str) -> None:
+    query = update.callback_query
+    if query is None:
+        return
+    action = callback_data.split(":", 1)[1] if ":" in callback_data else ""
+    await query.answer()
+    if action == "close" and query.message is not None:
+        try:
+            await query.message.delete()
+        except BadRequest:
+            logger.exception("Failed to delete pager message; removing buttons instead")
+            await query.edit_message_reply_markup(reply_markup=None)
+
+
+async def handle_vocabulary_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user: dict[str, Any],
+    callback_data: str,
+) -> None:
+    query = update.callback_query
+    if query is None or query.message is None:
+        return
+    language = user.get("interface_language")
+    parts = callback_data.split(":")
+    if len(parts) < 3 or parts[1] != "page":
+        await query.answer("Invalid page" if language == "en" else "Некорректная страница")
+        return
+
+    try:
+        page = int(parts[2])
+    except ValueError:
+        await query.answer("Invalid page" if language == "en" else "Некорректная страница")
+        return
+
+    db: Database = context.application.bot_data["db"]
+    items = await db.get_vocabulary_items(user["telegram_id"], limit=50)
+    if not items:
+        await query.answer(
+            "No saved phrases yet" if language == "en" else "Пока нет сохраненных фраз",
+            show_alert=True,
+        )
+        return
+
+    safe_page = min(max(page, 0), len(items) - 1)
+    await query.answer()
+    await edit_callback_message(
+        query,
+        format_vocabulary_card(items, safe_page, language),
+        reply_markup=vocabulary_pager_keyboard(safe_page, len(items), language),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def handle_topic_vocabulary_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user: dict[str, Any],
+    callback_data: str,
+) -> None:
+    query = update.callback_query
+    if query is None or query.message is None:
+        return
+    language = user.get("interface_language")
+    parts = callback_data.split(":")
+    if len(parts) < 4 or parts[1] != "page":
+        await query.answer("Invalid page" if language == "en" else "Некорректная страница")
+        return
+
+    try:
+        message_id = int(parts[2])
+        page = int(parts[3])
+    except ValueError:
+        await query.answer("Invalid page" if language == "en" else "Некорректная страница")
+        return
+
+    topic_vocabulary = cached_topic_vocabulary(context, message_id)
+    if topic_vocabulary is None:
+        topic_vocabulary = await topic_vocabulary_from_saved_items(context, user, message_id, language)
+    if topic_vocabulary is None:
+        await query.answer(
+            "Words were not found" if language == "en" else "Слова и фразы не найдены",
+            show_alert=True,
+        )
+        return
+
+    safe_page = min(max(page, 0), len(topic_vocabulary.items) - 1)
+    await query.answer()
+    await edit_callback_message(
+        query,
+        format_topic_vocabulary_card(topic_vocabulary, safe_page, language),
+        reply_markup=topic_vocabulary_pager_keyboard(
+            message_id,
+            safe_page,
+            len(topic_vocabulary.items),
+            language,
+        ),
+        parse_mode=ParseMode.HTML,
+    )
 
 
 async def handle_drill_callback(
@@ -488,7 +698,7 @@ async def handle_drill_callback(
         return
     language = user.get("interface_language")
     parts = callback_data.split(":")
-    if len(parts) < 4 or parts[1] != "start":
+    if len(parts) < 4 or parts[1] not in {"start", "page"}:
         await query.answer("Invalid drill" if language == "en" else "Некорректная тренировка")
         return
 
@@ -498,6 +708,16 @@ async def handle_drill_callback(
         await query.answer("Invalid drill" if language == "en" else "Некорректная тренировка")
         return
     skill = parts[3]
+    page = 0
+    if parts[1] == "page":
+        if len(parts) < 5:
+            await query.answer("Invalid drill" if language == "en" else "Некорректная тренировка")
+            return
+        try:
+            page = int(parts[4])
+        except ValueError:
+            await query.answer("Invalid drill" if language == "en" else "Некорректная тренировка")
+            return
 
     db: Database = context.application.bot_data["db"]
     session = await db.get_session(session_id)
@@ -510,9 +730,34 @@ async def handle_drill_callback(
 
     feedback = _feedback_from_session(session, language)
     await query.answer()
-    await context.bot.send_chat_action(query.message.chat_id, ChatAction.TYPING)
-    drill = await build_skill_drill(context, user, session, feedback, skill, language)
-    await query.message.reply_text(format_skill_drill(drill, language))
+    drill = cached_skill_drill(context, session_id, skill)
+    if drill is None:
+        await context.bot.send_chat_action(query.message.chat_id, ChatAction.TYPING)
+        drill = await build_skill_drill(context, user, session, feedback, skill, language)
+        cache_skill_drill(context, session_id, skill, drill)
+
+    safe_page = min(max(page, 0), len(drill.tasks) - 1)
+    reply_markup = skill_drill_pager_keyboard(
+        session_id,
+        skill,
+        safe_page,
+        len(drill.tasks),
+        language,
+    )
+    text = format_skill_drill_card(drill, safe_page, language)
+    if parts[1] == "page":
+        await edit_callback_message(
+            query,
+            text,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    await query.message.reply_text(
+        text,
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
 
 
 async def handle_onboarding_callback(
@@ -567,6 +812,7 @@ async def handle_onboarding_callback(
             await update.callback_query.message.reply_text(
                 header + format_profile(completed_user, progress_data),
                 reply_markup=main_menu(completed_user.get("interface_language")),
+                parse_mode=ParseMode.HTML,
             )
             if completed_user.get("interface_language") == "en":
                 prompt = "Ready for your first speaking session?"
@@ -612,6 +858,7 @@ async def handle_settings_callback(
             query,
             format_settings(fresh_user),
             reply_markup=settings_keyboard(fresh_user.get("interface_language")),
+            parse_mode=ParseMode.HTML,
         )
         return
 
@@ -644,7 +891,7 @@ async def handle_settings_callback(
             "goal": ("🎯 Choose your goal:", "🎯 Выбери цель:"),
             "correction_style": ("🧾 Choose correction style:", "🧾 Выбери стиль исправлений:"),
             "reminder_time": ("🔔 Choose reminder time:", "🔔 Выбери время напоминания:"),
-            "tts_voice": ("🔊 Choose bot voice:", "🔊 Выбери голос бота:"),
+            "tts_voice": ("🔊 Choose bot voice:", "🔊 Выбери голосовые сообщения бота:"),
             "interface_language": ("🌐 Choose interface language:", "🌐 Выбери язык интерфейса:"),
         }
         if field not in prompts:
@@ -672,6 +919,7 @@ async def handle_settings_callback(
             query,
             format_settings(fresh_user),
             reply_markup=settings_keyboard(fresh_user.get("interface_language")),
+            parse_mode=ParseMode.HTML,
         )
         return
 
@@ -696,6 +944,7 @@ async def handle_settings_callback(
             query,
             format_settings(fresh_user),
             reply_markup=settings_keyboard(fresh_user.get("interface_language")),
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -780,6 +1029,7 @@ async def start_practice(
     db: Database = context.application.bot_data["db"]
     existing = await db.get_active_session(user["telegram_id"])
     if existing:
+        last_tutor_message = await db.get_last_session_message(existing["id"], "tutor")
         if user.get("interface_language") == "en":
             message = (
                 f"▶️ Continuing topic: {existing['topic_title']}\n\n"
@@ -788,13 +1038,34 @@ async def start_practice(
         else:
             message = (
                 f"▶️ Продолжаем тему: {existing['topic_title']}\n\n"
-                "Отправь voice или напиши ответ на английском."
+                "Отправь голосовое сообщение или напиши ответ на английском."
             )
         await update.effective_message.reply_text(
             message,
             reply_markup=practice_reply_keyboard_for(user.get("interface_language")),
         )
+        if last_tutor_message:
+            message_id = int(last_tutor_message["id"])
+            text = str(last_tutor_message["content"])
+            await send_text_and_voice(
+                update,
+                context,
+                text,
+                text,
+                practice_message_keyboard(message_id, user.get("interface_language")),
+                voice=user.get("tts_voice"),
+            )
         return
+
+    message = (
+        "🎙 Practice started. Use the keyboard below while we are speaking."
+        if user.get("interface_language") == "en"
+        else "🎙 Практика началась. Используй клавиатуру ниже во время speaking."
+    )
+    await update.effective_message.reply_text(
+        message,
+        reply_markup=practice_reply_keyboard_for(user.get("interface_language")),
+    )
 
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
     topic_selector: TopicSelector = context.application.bot_data["topic_selector"]
@@ -925,7 +1196,10 @@ async def handle_pending_text(
     logger.warning("Unknown pending action for user %s: %s", user["telegram_id"], action)
     await db.set_pending_action(user["telegram_id"], None)
     message = "Please try again." if language == "en" else "Попробуй еще раз."
-    await update.effective_message.reply_text(message, reply_markup=main_menu(language))
+    await update.effective_message.reply_text(
+        message,
+        reply_markup=await main_menu_reply_markup(context, user),
+    )
     return True
 
 
@@ -941,13 +1215,19 @@ async def handle_vocabulary_review_answer(
     await db.set_pending_action(user["telegram_id"], None)
     if item_id is None:
         message = "Review item was not found." if language == "en" else "Фраза для повторения не найдена."
-        await update.effective_message.reply_text(message, reply_markup=main_menu(language))
+        await update.effective_message.reply_text(
+            message,
+            reply_markup=await main_menu_reply_markup(context, user),
+        )
         return
 
     item = await db.get_vocabulary_item(user["telegram_id"], int(item_id))
     if item is None:
         message = "Review item was not found." if language == "en" else "Фраза для повторения не найдена."
-        await update.effective_message.reply_text(message, reply_markup=main_menu(language))
+        await update.effective_message.reply_text(
+            message,
+            reply_markup=await main_menu_reply_markup(context, user),
+        )
         return
 
     expected = str(item.get("phrase") or "").strip()
@@ -963,7 +1243,10 @@ async def handle_vocabulary_review_answer(
             message = f"Almost. The phrase was:\n\n{expected}"
         else:
             message = f"Почти. Правильная фраза:\n\n{expected}"
-    await update.effective_message.reply_text(message, reply_markup=main_menu(language))
+    await update.effective_message.reply_text(
+        message,
+        reply_markup=await main_menu_reply_markup(context, user),
+    )
 
 
 async def handle_contact_message(
@@ -1003,8 +1286,11 @@ async def handle_contact_message(
             else "Спасибо. Мы получили обращение и свяжемся с тобой."
         )
     else:
-        response = "Thanks for the feedback." if language == "en" else "Спасибо за feedback."
-    await update.effective_message.reply_text(response, reply_markup=main_menu(language))
+        response = "Thanks for the feedback." if language == "en" else "Спасибо за отзыв."
+    await update.effective_message.reply_text(
+        response,
+        reply_markup=await main_menu_reply_markup(context, user),
+    )
 
 
 async def handle_practice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1044,7 +1330,7 @@ async def handle_practice_message(update: Update, context: ContextTypes.DEFAULT_
         )
         await update.effective_message.reply_text(
             message,
-            reply_markup=main_menu(user.get("interface_language")),
+            reply_markup=await main_menu_reply_markup(context, user),
         )
         return
 
@@ -1158,14 +1444,21 @@ async def finish_session(
     context: ContextTypes.DEFAULT_TYPE,
     user: dict[str, Any],
     session: dict[str, Any],
+    messages: list[dict[str, Any]] | None = None,
 ) -> None:
     db: Database = context.application.bot_data["db"]
     evaluator: Evaluator = context.application.bot_data["evaluator"]
     memory_updater: MemoryUpdater = context.application.bot_data["memory_updater"]
 
-    await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
-    messages = await db.get_session_messages(session["id"], limit=40)
     language = "en" if user.get("interface_language") == "en" else "ru"
+    processing_message = await update.effective_message.reply_text(
+        format_processing_status(1, language),
+        parse_mode=ParseMode.HTML,
+    )
+    await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
+    if messages is None:
+        messages = await db.get_session_messages(session["id"], limit=40)
+    await update_processing_message(processing_message, format_processing_status(2, language))
     try:
         feedback = await evaluator.evaluate(
             profile=user,
@@ -1177,6 +1470,7 @@ async def finish_session(
         logger.exception("Evaluation failed; using fallback feedback")
         feedback = fallback_feedback(language)
     await db.complete_session(session["id"], feedback.summary, feedback.model_dump())
+    await update_processing_message(processing_message, format_processing_status(3, language))
 
     try:
         memory_update = await memory_updater.update(
@@ -1213,28 +1507,35 @@ async def finish_session(
             session["id"],
             fallback_vocabulary_from_feedback(feedback, language),
         )
+    await update_processing_message(processing_message, format_processing_status(4, language))
 
     await update.effective_message.reply_text(
         format_feedback(feedback, user.get("interface_language")),
         reply_markup=main_menu(user.get("interface_language")),
+        parse_mode=ParseMode.HTML,
     )
     progress_data = await db.get_progress(user["telegram_id"])
     await update.effective_message.reply_text(
         format_streak(progress_data, language),
         reply_markup=main_menu(user.get("interface_language")),
+        parse_mode=ParseMode.HTML,
     )
     weak_score = weakest_feedback_score(feedback)
     if weak_score is not None:
         skill_slug = skill_slug_for(weak_score.name)
         if language == "en":
             prompt = (
-                f"Lowest area: {weak_score.name} ({weak_score.score}/5).\n"
-                f"Want to practice {weak_score.name} with short tasks on this topic?"
+                "<b>🎯 Practice after feedback</b>\n"
+                "━━━━━━━━━━━━\n\n"
+                f"<b>Lowest area:</b> {escape(weak_score.name)} ({weak_score.score}/5).\n\n"
+                f"Want to practice <b>{escape(weak_score.name)}</b> with short cards on this topic?"
             )
         else:
             prompt = (
-                f"Самая слабая зона: {weak_score.name} ({weak_score.score}/5).\n"
-                f"Хочешь потренировать {weak_score.name} на этой теме?"
+                "<b>🎯 Тренировка после разбора</b>\n"
+                "━━━━━━━━━━━━\n\n"
+                f"<b>Самая слабая зона:</b> {escape(weak_score.name)} ({weak_score.score}/5).\n\n"
+                f"Хочешь потренировать <b>{escape(weak_score.name)}</b> на этой теме короткими карточками?"
             )
         await update.effective_message.reply_text(
             prompt,
@@ -1244,7 +1545,29 @@ async def finish_session(
                 weak_score.name,
                 user.get("interface_language"),
             ),
+            parse_mode=ParseMode.HTML,
         )
+
+
+async def finish_session_without_analysis(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user: dict[str, Any],
+    session: dict[str, Any],
+) -> None:
+    db: Database = context.application.bot_data["db"]
+    language = "en" if user.get("interface_language") == "en" else "ru"
+    summary = (
+        "Session closed without analysis because there were fewer than two user messages."
+        if language == "en"
+        else "Сессия закрыта без анализа: было меньше двух сообщений пользователя."
+    )
+    await db.close_session_without_analysis(session["id"], summary)
+    await update.effective_message.reply_text(
+        format_no_analysis_finished(language),
+        reply_markup=main_menu(user.get("interface_language")),
+        parse_mode=ParseMode.HTML,
+    )
 
 
 async def send_text_and_voice(
@@ -1277,13 +1600,143 @@ async def send_or_edit_inline(update: Update, text: str, reply_markup: Any) -> N
     await update.effective_message.reply_text(text, reply_markup=reply_markup)
 
 
-async def edit_callback_message(query: Any, text: str, reply_markup: Any) -> None:
+async def edit_callback_message(
+    query: Any,
+    text: str,
+    reply_markup: Any,
+    parse_mode: str | None = None,
+) -> None:
     try:
-        await query.edit_message_text(text=text, reply_markup=reply_markup)
+        await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode)
     except BadRequest as exc:
         if "Message is not modified" in str(exc):
             return
         raise
+
+
+async def update_processing_message(message: Any, text: str) -> None:
+    try:
+        await message.edit_text(text, parse_mode=ParseMode.HTML)
+    except BadRequest as exc:
+        if "Message is not modified" in str(exc):
+            return
+        logger.exception("Failed to update processing message")
+    except Exception:
+        logger.exception("Failed to update processing message")
+
+
+def count_user_messages(messages: list[dict[str, Any]]) -> int:
+    return sum(1 for message in messages if message.get("role") == "user")
+
+
+async def main_menu_reply_markup(
+    context: ContextTypes.DEFAULT_TYPE,
+    user: dict[str, Any],
+) -> Any:
+    _ = context
+    if user.get("onboarding_completed"):
+        return main_menu(user.get("interface_language"))
+    return ReplyKeyboardRemove()
+
+
+def cache_topic_vocabulary(
+    context: ContextTypes.DEFAULT_TYPE,
+    message_id: int,
+    vocabulary: TopicVocabulary,
+) -> None:
+    if context.user_data is None:
+        return
+    cache = context.user_data.setdefault("topic_vocabulary", {})
+    if isinstance(cache, dict):
+        cache[str(message_id)] = vocabulary.model_dump()
+
+
+def cached_topic_vocabulary(
+    context: ContextTypes.DEFAULT_TYPE,
+    message_id: int,
+) -> TopicVocabulary | None:
+    if context.user_data is None:
+        return None
+    cache = context.user_data.get("topic_vocabulary")
+    if not isinstance(cache, dict):
+        return None
+    raw_vocabulary = cache.get(str(message_id))
+    if raw_vocabulary is None:
+        return None
+    try:
+        return TopicVocabulary.model_validate(raw_vocabulary)
+    except ValueError:
+        return None
+
+
+def cache_skill_drill(
+    context: ContextTypes.DEFAULT_TYPE,
+    session_id: int,
+    skill: str,
+    drill: SkillDrill,
+) -> None:
+    if context.user_data is None:
+        return
+    cache = context.user_data.setdefault("skill_drills", {})
+    if isinstance(cache, dict):
+        cache[f"{session_id}:{skill}"] = drill.model_dump()
+
+
+def cached_skill_drill(
+    context: ContextTypes.DEFAULT_TYPE,
+    session_id: int,
+    skill: str,
+) -> SkillDrill | None:
+    if context.user_data is None:
+        return None
+    cache = context.user_data.get("skill_drills")
+    if not isinstance(cache, dict):
+        return None
+    raw_drill = cache.get(f"{session_id}:{skill}")
+    if raw_drill is None:
+        return None
+    try:
+        return SkillDrill.model_validate(raw_drill)
+    except ValueError:
+        return None
+
+
+async def topic_vocabulary_from_saved_items(
+    context: ContextTypes.DEFAULT_TYPE,
+    user: dict[str, Any],
+    message_id: int,
+    language: str | None,
+) -> TopicVocabulary | None:
+    db: Database = context.application.bot_data["db"]
+    message = await db.get_message_for_user(message_id, user["telegram_id"])
+    if not message:
+        return None
+    session = await db.get_session(int(message["session_id"]))
+    if session is None:
+        return None
+
+    items = await db.get_vocabulary_items_for_session(user["telegram_id"], session["id"], limit=10)
+    if len(items) < 5:
+        return fallback_topic_vocabulary(session, "en" if language == "en" else "ru")
+
+    topic_items = [
+        {
+            "phrase": item.get("phrase") or "",
+            "translation": item.get("translation") or "",
+            "example": item.get("note") or "",
+        }
+        for item in items
+        if item.get("phrase")
+    ][:10]
+    try:
+        return TopicVocabulary.model_validate(
+            {
+                "title": session.get("topic_title") or "Topic vocabulary",
+                "items": topic_items,
+            }
+        )
+    except ValueError:
+        return fallback_topic_vocabulary(session, "en" if language == "en" else "ru")
 
 
 async def handle_menu_text(
@@ -1320,6 +1773,21 @@ async def handle_menu_text(
     if normalized in menu_labels:
         db: Database = context.application.bot_data["db"]
         await db.set_pending_action(user["telegram_id"], None)
+        if not user["onboarding_completed"]:
+            language = user.get("interface_language")
+            message = (
+                "Let's finish the quick setup first."
+                if language == "en"
+                else "Сначала закончим короткую настройку."
+            )
+            await update.effective_message.reply_text(message, reply_markup=ReplyKeyboardRemove())
+            await ask_onboarding_step(
+                update,
+                context,
+                user.get("onboarding_step") or "english_level",
+                user.get("onboarding_data") or {},
+            )
+            return True
 
     if normalized in {START_PRACTICE_LABEL, START_PRACTICE_LABEL_EN}:
         await start_practice(update, context, user)
@@ -1487,19 +1955,34 @@ def fallback_topic_vocabulary(session: dict[str, Any], language: str) -> TopicVo
                 "example": "I think we need a practical solution.",
             },
             {
-                "phrase": "to compare options",
-                "translation": "to look at different choices",
-                "example": "It helps to compare options before deciding.",
+                "phrase": "One reason is that...",
+                "translation": "a phrase for giving a reason",
+                "example": "One reason is that it saves time.",
             },
             {
-                "phrase": "a clear example",
-                "translation": "a specific example that is easy to understand",
-                "example": "Let me give a clear example.",
-            },
-            {
-                "phrase": "in my experience",
-                "translation": "from what I have seen or done",
+                "phrase": "In my experience,...",
+                "translation": "a phrase for starting a personal example",
                 "example": "In my experience, this works well.",
+            },
+            {
+                "phrase": "The main challenge is...",
+                "translation": "a phrase for naming the key difficulty",
+                "example": "The main challenge is staying consistent.",
+            },
+            {
+                "phrase": "Could you explain what you mean by...?",
+                "translation": "a polite clarification question",
+                "example": "Could you explain what you mean by better balance?",
+            },
+            {
+                "phrase": "I see your point, but...",
+                "translation": "a polite phrase for disagreeing",
+                "example": "I see your point, but I think there is another side.",
+            },
+            {
+                "phrase": "Let me give a clear example.",
+                "translation": "a phrase for making your answer more specific",
+                "example": "Let me give a clear example from my work.",
             },
         ]
     else:
@@ -1515,19 +1998,34 @@ def fallback_topic_vocabulary(session: dict[str, Any], language: str) -> TopicVo
                 "example": "I think we need a practical solution.",
             },
             {
-                "phrase": "to compare options",
-                "translation": "сравнивать варианты",
-                "example": "It helps to compare options before deciding.",
+                "phrase": "One reason is that...",
+                "translation": "одна из причин в том, что...",
+                "example": "One reason is that it saves time.",
             },
             {
-                "phrase": "a clear example",
-                "translation": "понятный конкретный пример",
-                "example": "Let me give a clear example.",
-            },
-            {
-                "phrase": "in my experience",
-                "translation": "по моему опыту",
+                "phrase": "In my experience,...",
+                "translation": "по моему опыту...",
                 "example": "In my experience, this works well.",
+            },
+            {
+                "phrase": "The main challenge is...",
+                "translation": "главная сложность в том, что...",
+                "example": "The main challenge is staying consistent.",
+            },
+            {
+                "phrase": "Could you explain what you mean by...?",
+                "translation": "можешь пояснить, что ты имеешь в виду под...?",
+                "example": "Could you explain what you mean by better balance?",
+            },
+            {
+                "phrase": "I see your point, but...",
+                "translation": "я понимаю твою мысль, но...",
+                "example": "I see your point, but I think there is another side.",
+            },
+            {
+                "phrase": "Let me give a clear example.",
+                "translation": "позволь привести понятный пример",
+                "example": "Let me give a clear example from my work.",
             },
         ]
     return TopicVocabulary.model_validate({"title": str(topic), "items": items})

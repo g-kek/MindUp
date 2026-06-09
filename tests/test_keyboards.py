@@ -2,10 +2,15 @@ from mindup_bot.bot.keyboards import (
     first_session_keyboard,
     main_menu,
     practice_message_keyboard,
+    resume_practice_keyboard,
     settings_keyboard,
     settings_option_keyboard,
+    short_session_finish_keyboard,
+    skill_drill_pager_keyboard,
     skill_drill_keyboard,
+    topic_vocabulary_pager_keyboard,
     topics_keyboard,
+    vocabulary_pager_keyboard,
 )
 
 
@@ -32,9 +37,9 @@ def test_main_menu_and_practice_message_include_product_actions() -> None:
     assert "📚 Словарь" in menu_buttons
     assert "🔁 Повторить" in menu_buttons
     assert "🛟 Поддержка" in menu_buttons
-    assert "💬 Feedback" in menu_buttons
+    assert "💬 Отзыв" in menu_buttons
     assert "Перевести" in practice_texts
-    assert "Слова по теме" in practice_texts
+    assert "Слова и фразы" in practice_texts
     assert "Завершить" in practice_texts
 
 
@@ -51,3 +56,30 @@ def test_skill_drill_keyboard_points_to_session_and_skill() -> None:
 
     assert button.text == "Train Vocabulary"
     assert button.callback_data == "drill:start:7:vocabulary"
+
+
+def test_vocabulary_pagers_have_left_right_controls() -> None:
+    markup = vocabulary_pager_keyboard(1, 3, "ru")
+    buttons = markup.inline_keyboard[0]
+
+    assert buttons[0].text == "←"
+    assert buttons[0].callback_data == "vocab:page:0"
+    assert buttons[1].text == "2/3"
+    assert buttons[2].callback_data == "vocab:page:2"
+
+
+def test_topic_vocabulary_and_resume_keyboards() -> None:
+    pager = topic_vocabulary_pager_keyboard(42, 0, 2, "ru")
+    resume = resume_practice_keyboard("ru")
+
+    assert pager.inline_keyboard[0][2].callback_data == "topic_vocab:page:42:1"
+    assert resume.inline_keyboard[0][0].text == "Вернуться к практике"
+
+
+def test_short_session_and_skill_drill_pager_keyboards() -> None:
+    short_session = short_session_finish_keyboard("ru")
+    drill_pager = skill_drill_pager_keyboard(7, "vocabulary", 0, 5, "ru")
+
+    assert short_session.inline_keyboard[0][0].text == "Продолжить разговор"
+    assert short_session.inline_keyboard[1][0].callback_data == "practice:force_finish"
+    assert drill_pager.inline_keyboard[0][2].callback_data == "drill:page:7:vocabulary:1"

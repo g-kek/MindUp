@@ -91,6 +91,9 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         level=logging.INFO,
     )
+    # Telegram Bot API URLs contain the bot token. Keep HTTP request logs out of normal logs.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     application = build_application()
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 

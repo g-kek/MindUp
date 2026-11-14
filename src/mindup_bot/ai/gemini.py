@@ -19,6 +19,7 @@ class GeminiGateway:
     def __init__(self, settings: Settings) -> None:
         os.environ.setdefault("GEMINI_API_KEY", settings.gemini_api_key)
         self._models = model_candidates(settings.gemini_model, settings.gemini_fallback_models)
+        self._thinking_level = settings.gemini_thinking_level
         self._client = genai.Client(api_key=settings.gemini_api_key)
 
     async def generate_json(
@@ -53,7 +54,7 @@ class GeminiGateway:
                     system_instruction=system_instruction,
                     response_mime_type="application/json",
                     response_schema=schema,
-                    temperature=temperature,
+                    **model_generation_options(model, self._thinking_level, temperature),
                 ),
             ),
             operation="generate_content",
@@ -64,6 +65,23 @@ class GeminiGateway:
         if parsed is not None:
             return schema.model_validate(parsed)
         return parse_json_model(response.text or "{}", schema)
+
+
+def model_generation_options(
+    model: str, thinking_level: str, temperature: float | None = None,
+) -> dict:
+    """Apply generation settings per candidate, including when falling back.
+
+    Gemini 4 ignores custom sampling parameters; reasoning depth controls latency.
+    Older 2.x overrides still accept temperature but not thinking_level.
+    """
+    name = model.removeprefix("models/")
+    options = {}
+    if name.startswith(("gemini-3", "gemini-4")):
+        options["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level.upper())
+    if not name.startswith("gemini-4") and temperature is not None:
+        options["temperature"] = temperature
+    return options
 
 
 def parse_json_model(text: str, schema: type[ModelT]) -> ModelT:

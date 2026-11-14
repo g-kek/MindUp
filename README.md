@@ -125,12 +125,26 @@ TELEGRAM_BOT_TOKEN=...
 GEMINI_API_KEY=...
 ```
 
+По умолчанию анализ и распознавание голоса используют `gemini-4-hydrogen`, резерв —
+`gemini-3.8-flash`. Настройки можно переопределить в `.env`:
+
+```bash
+GEMINI_MODEL=gemini-4-hydrogen
+GEMINI_STT_MODEL=gemini-4-hydrogen
+GEMINI_THINKING_LEVEL=medium
+GEMINI_STT_THINKING_LEVEL=low
+```
+
+Для Gemini 4 код не передаёт `temperature`; уровень рассуждения задаётся отдельно для анализа
+и транскрипции. Старые модели 2.x можно указать явно; `thinking_level` им не передаётся.
+Параметры миграции сверены с [документацией Gemini 4 Hydrogen](https://aistudio.google.com/docs/whats-new-gemini-4-hydrogen).
+
 Если Gemini возвращает временный `503 UNAVAILABLE` из-за высокой нагрузки, бот пробует
 fallback-модели из `.env`:
 
 ```bash
-GEMINI_FALLBACK_MODELS=gemini-2.5-flash-lite
-GEMINI_STT_FALLBACK_MODELS=gemini-2.5-flash-lite
+GEMINI_FALLBACK_MODELS=gemini-3.8-flash
+GEMINI_STT_FALLBACK_MODELS=gemini-3.8-flash
 ```
 
 Для support/feedback можно указать Telegram chat id групп:

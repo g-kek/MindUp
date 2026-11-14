@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,14 +14,22 @@ class Settings(BaseSettings):
     audio_dir: Path = Field(default=Path("data/audio"), alias="AUDIO_DIR")
     app_timezone: str = Field(default="Asia/Novosibirsk", alias="APP_TIMEZONE")
 
-    gemini_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_MODEL")
-    gemini_stt_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_STT_MODEL")
+    gemini_model: str = Field(default="gemini-4-hydrogen", alias="GEMINI_MODEL")
+    gemini_stt_model: str = Field(default="gemini-4-hydrogen", alias="GEMINI_STT_MODEL")
+    gemini_thinking_level: Literal["low", "medium", "high"] = Field(
+        default="medium",
+        alias="GEMINI_THINKING_LEVEL",
+    )
+    gemini_stt_thinking_level: Literal["low", "medium", "high"] = Field(
+        default="low",
+        alias="GEMINI_STT_THINKING_LEVEL",
+    )
     gemini_fallback_models: str = Field(
-        default="gemini-2.5-flash-lite",
+        default="gemini-3.8-flash",
         alias="GEMINI_FALLBACK_MODELS",
     )
     gemini_stt_fallback_models: str = Field(
-        default="gemini-2.5-flash-lite",
+        default="gemini-3.8-flash",
         alias="GEMINI_STT_FALLBACK_MODELS",
     )
     tts_voice: str = Field(default="en-US-JennyNeural", alias="TTS_VOICE")

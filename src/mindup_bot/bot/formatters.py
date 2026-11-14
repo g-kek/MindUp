@@ -310,6 +310,22 @@ def format_learning_profile(history: list[dict], language: str | None = "ru") ->
     return "\n\n".join(parts)
 
 
+def format_rule_practice_history(history: list[dict], language: str | None = "ru") -> str:
+    en = language == "en"
+    title = "Recent rule training" if en else "Последние тренировки правил"
+    lines = [f"<b>🧩 {title}</b>"]
+    for practice in history:
+        counts = f"{practice['correct']}/{practice['attempted']}"
+        label = "correct on first attempt" if en else "верно с первой попытки"
+        lines.append(f"• {_value(practice['requested_topic'])}: {counts} {label}")
+    lines.append(
+        "These are prompted exercises; speaking progress is tracked separately."
+        if en
+        else "Это упражнения с подсказками; прогресс в свободной речи учитывается отдельно."
+    )
+    return "\n\n".join(lines)
+
+
 def format_profile(user: dict, progress: dict) -> str:
     language = language_of(user)
     completed = progress["completed_count"]
@@ -621,6 +637,7 @@ def format_help(language: str | None = "ru") -> str:
             "💬 <b>Dialogue:</b> leads a short conversation with follow-up questions.\n"
             "🧾 <b>Feedback:</b> shows mistakes and better phrases after the session.\n"
             "🧠 <b>/progress:</b> recurring errors, observed improvements and next focus.\n"
+            "🧩 <b>/train rule or topic:</b> contrasts, examples and five checked exercises.\n"
             "📚 <b>/vocabulary</b> and <b>/review:</b> phrases and revision.\n\n"
             "<b>Format:</b> 10 minutes a day, voice or text."
         )
@@ -631,6 +648,7 @@ def format_help(language: str | None = "ru") -> str:
         "💬 <b>Диалог:</b> ведет разговор и задает уточняющие вопросы.\n"
         "🧾 <b>Разбор:</b> после сессии показывает ошибки и улучшенные фразы.\n"
         "🧠 <b>/progress:</b> повторяющиеся ошибки, улучшения и следующий фокус.\n"
+        "🧩 <b>/train правило или тема:</b> сравнения, примеры и пять заданий с проверкой.\n"
         "📚 <b>/vocabulary</b> и <b>/review:</b> фразы и повторение.\n\n"
         "<b>Формат:</b> 10 минут в день, голосовое сообщение или текст."
     )

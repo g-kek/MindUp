@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 RuleId = Literal[
     "tenses",
@@ -162,3 +162,54 @@ class SkillDrill(BaseModel):
     )
     title: str = Field(description="Short drill title in the user's interface language")
     tasks: list[DrillTask] = Field(min_length=5, max_length=10)
+
+
+class ContrastExample(BaseModel):
+    sentence: str = Field(min_length=1, max_length=250)
+    explanation: str = Field(min_length=1, max_length=300)
+
+
+class RuleTask(BaseModel):
+    kind: Literal["choose", "gap", "repair", "speaking"]
+    prompt: str = Field(min_length=1, max_length=650)
+    choices: list[str] = Field(default_factory=list, max_length=2)
+    correct_choice: int | None = Field(default=None, ge=0, le=1)
+    answer: str = Field(min_length=1, max_length=500)
+    explanation: str = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_choices(self) -> "RuleTask":
+        if self.kind == "choose":
+            if len(self.choices) != 2 or self.correct_choice is None:
+                raise ValueError("Choice tasks require two options and a correct index")
+            if any(not option.strip() or len(option) > 300 for option in self.choices):
+                raise ValueError("Choice options must be nonempty and at most 300 characters")
+            if self.choices[0].strip().casefold() == self.choices[1].strip().casefold():
+                raise ValueError("Choice options must differ")
+            if self.answer != self.choices[self.correct_choice]:
+                raise ValueError("The answer must match the correct choice")
+        elif self.choices or self.correct_choice is not None:
+            raise ValueError("Only choice tasks can define choices")
+        return self
+
+
+class RuleLesson(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    overview: str = Field(min_length=1, max_length=600)
+    focus_rules: list[RuleId] = Field(min_length=1, max_length=3)
+    examples: list[ContrastExample] = Field(min_length=2, max_length=4)
+    tasks: list[RuleTask] = Field(min_length=5, max_length=5)
+
+    @model_validator(mode="after")
+    def validate_mix(self) -> "RuleLesson":
+        kinds = [task.kind for task in self.tasks]
+        if kinds.count("choose") != 2 or not {"gap", "repair", "speaking"}.issubset(kinds):
+            raise ValueError("A lesson needs two choices, a gap, a repair and a speaking task")
+        return self
+
+
+class RuleAnswerEvaluation(BaseModel):
+    outcome: Literal["correct", "partial", "incorrect"]
+    feedback: str = Field(min_length=1, max_length=600)
+    suggested_answer: str = Field(min_length=1, max_length=500)
+    next_hint: str = Field(min_length=1, max_length=350)

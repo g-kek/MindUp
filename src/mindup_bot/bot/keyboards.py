@@ -8,6 +8,8 @@ SETTINGS_LABEL = "⚙️ Настройки"
 HELP_LABEL = "❓ Помощь"
 FINISH_LABEL = "✅ Завершить"
 MENU_LABEL = "🏠 Меню"
+RULE_PRACTICE_LABEL = "🧩 Отработать правило"
+RULE_PRACTICE_LABEL_EN = "🧩 Train a rule"
 CUSTOM_TOPIC_LABEL = "✍️ Своя тема"
 VOCABULARY_LABEL = "📚 Словарь"
 VOCABULARY_REVIEW_LABEL = "🔁 Повторить"
@@ -135,7 +137,8 @@ def main_menu(language: str | None = "ru") -> ReplyKeyboardMarkup:
     if language == "en":
         buttons = [
             [START_PRACTICE_LABEL_EN, PROFILE_LABEL_EN],
-            [CUSTOM_TOPIC_LABEL_EN, VOCABULARY_LABEL_EN],
+            [RULE_PRACTICE_LABEL_EN, CUSTOM_TOPIC_LABEL_EN],
+            [VOCABULARY_LABEL_EN],
             [VOCABULARY_REVIEW_LABEL_EN, SUPPORT_LABEL_EN],
             [SETTINGS_LABEL_EN, HELP_LABEL_EN],
             [FEEDBACK_LABEL_EN],
@@ -144,7 +147,8 @@ def main_menu(language: str | None = "ru") -> ReplyKeyboardMarkup:
     else:
         buttons = [
             [START_PRACTICE_LABEL, PROFILE_LABEL],
-            [CUSTOM_TOPIC_LABEL, VOCABULARY_LABEL],
+            [RULE_PRACTICE_LABEL, CUSTOM_TOPIC_LABEL],
+            [VOCABULARY_LABEL],
             [VOCABULARY_REVIEW_LABEL, SUPPORT_LABEL],
             [SETTINGS_LABEL, HELP_LABEL],
             [FEEDBACK_LABEL],

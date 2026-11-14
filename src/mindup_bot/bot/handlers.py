@@ -40,6 +40,7 @@ from mindup_bot.ai.schemas import (
     TopicVocabulary,
     TutorReply,
 )
+from mindup_bot.bot import rule_practice
 from mindup_bot.bot.formatters import (
     format_feedback,
     format_help,
@@ -50,6 +51,7 @@ from mindup_bot.bot.formatters import (
     format_processing_status,
     format_profile,
     format_progress_insight,
+    format_rule_practice_history,
     format_settings,
     format_short_session_warning,
     format_skill_drill_card,
@@ -76,6 +78,8 @@ from mindup_bot.bot.keyboards import (
     PROFILE_LABEL,
     PROFILE_LABEL_EN,
     REMINDER_OPTIONS,
+    RULE_PRACTICE_LABEL,
+    RULE_PRACTICE_LABEL_EN,
     SETTINGS_LABEL,
     SETTINGS_LABEL_EN,
     START_PRACTICE_LABEL,
@@ -126,6 +130,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("finish", finish))
     application.add_handler(CommandHandler("progress", progress))
     application.add_handler(CommandHandler("ielts", ielts_practice))
+    application.add_handler(CommandHandler("train", train_rule))
     application.add_handler(CommandHandler("topic", custom_topic))
     application.add_handler(CommandHandler("vocabulary", vocabulary))
     application.add_handler(CommandHandler("review", vocabulary_review))
@@ -221,10 +226,24 @@ async def progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         format_learning_profile(user.get("learning_history", []), language),
         parse_mode=ParseMode.HTML,
     )
+    if user.get("rule_practice_history"):
+        await update.effective_message.reply_text(
+            format_rule_practice_history(user["rule_practice_history"], language),
+            parse_mode=ParseMode.HTML,
+        )
 
 
 async def ielts_practice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await start_practice(update, context, await ensure_user(update, context))
+
+
+async def train_rule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = await ensure_user(update, context)
+    if not user["onboarding_completed"]:
+        await menu(update, context)
+        return
+    requested_topic = " ".join(context.args) if context.args else None
+    await rule_practice.start(update, context, user, requested_topic)
 
 
 async def custom_topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -371,6 +390,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = await ensure_user(update, context)
+    db: Database = context.application.bot_data["db"]
+    if not await db.get_active_session(user["telegram_id"]) and await rule_practice.stop(
+        update, context, user
+    ):
+        return
     await finish_active_session(update, context, force_without_analysis=False)
 
 
@@ -445,6 +470,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data.startswith("practice:"):
         await handle_practice_callback(update, context, user, data)
+        return
+
+    if data.startswith("train:"):
+        await rule_practice.callback(update, context, user, data)
         return
 
     if data.startswith("drill:"):
@@ -1090,6 +1119,7 @@ async def start_practice(
         return
 
     db: Database = context.application.bot_data["db"]
+    await db.set_pending_action(user["telegram_id"], None)
     existing = await db.get_active_session(user["telegram_id"])
     if existing:
         last_tutor_message = await db.get_last_session_message(existing["id"], "tutor")
@@ -1252,6 +1282,14 @@ async def handle_pending_text(
         await start_custom_topic_session(update, context, user, text)
         return True
 
+    if action == "rule_topic":
+        await rule_practice.create(update, context, user, text)
+        return True
+
+    if action == "rule_answer":
+        await rule_practice.answer(update, context, user, text)
+        return True
+
     if action == "vocab_review":
         await handle_vocabulary_review_answer(update, context, user, text)
         return True
@@ -1373,6 +1411,11 @@ async def handle_practice_message(update: Update, context: ContextTypes.DEFAULT_
             return
         if await handle_pending_text(update, context, user, text):
             return
+    elif user.get("pending_action") == "rule_answer":
+        answer = await extract_user_text(update, context)
+        if answer:
+            await rule_practice.answer(update, context, user, answer)
+        return
     elif user.get("pending_action"):
         message = (
             "Please send text for this action."
@@ -1836,6 +1879,8 @@ async def handle_menu_text(
         PROFILE_LABEL_EN,
         CUSTOM_TOPIC_LABEL,
         CUSTOM_TOPIC_LABEL_EN,
+        RULE_PRACTICE_LABEL,
+        RULE_PRACTICE_LABEL_EN,
         VOCABULARY_LABEL,
         VOCABULARY_LABEL_EN,
         VOCABULARY_REVIEW_LABEL,
@@ -1877,6 +1922,9 @@ async def handle_menu_text(
         return True
     if normalized in {PROFILE_LABEL, PROFILE_LABEL_EN}:
         await progress(update, context)
+        return True
+    if normalized in {RULE_PRACTICE_LABEL, RULE_PRACTICE_LABEL_EN}:
+        await rule_practice.start(update, context, user)
         return True
     if normalized in {CUSTOM_TOPIC_LABEL, CUSTOM_TOPIC_LABEL_EN}:
         await custom_topic(update, context)
@@ -1921,6 +1969,7 @@ async def ensure_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> dic
         first_name=telegram_user.first_name,
     )
     user["learning_history"] = await db.get_learning_profile(telegram_user.id)
+    user["rule_practice_history"] = await db.get_rule_practice_history(telegram_user.id)
     return user
 
 

@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 
-
 START_PRACTICE_LABEL = "🚀 Начать практику"
 PROFILE_LABEL = "📊 Мой профиль"
 SETTINGS_LABEL = "⚙️ Настройки"
 HELP_LABEL = "❓ Помощь"
 FINISH_LABEL = "✅ Завершить"
 MENU_LABEL = "🏠 Меню"
+RULE_PRACTICE_LABEL = "🧩 Отработать правило"
+RULE_PRACTICE_LABEL_EN = "🧩 Train a rule"
 CUSTOM_TOPIC_LABEL = "✍️ Своя тема"
 VOCABULARY_LABEL = "📚 Словарь"
 VOCABULARY_REVIEW_LABEL = "🔁 Повторить"
@@ -45,6 +46,7 @@ LEVEL_OPTIONS_EN = [
 ]
 
 GOAL_OPTIONS = [
+    ("🎓 IELTS Speaking", "ielts"),
     ("💼 Работа", "work"),
     ("🌍 Путешествия", "travel"),
     ("🎓 Учеба", "study"),
@@ -54,6 +56,7 @@ GOAL_OPTIONS = [
 ]
 
 GOAL_OPTIONS_EN = [
+    ("🎓 IELTS Speaking", "ielts"),
     ("💼 Work", "work"),
     ("🌍 Travel", "travel"),
     ("🎓 Study", "study"),
@@ -134,7 +137,8 @@ def main_menu(language: str | None = "ru") -> ReplyKeyboardMarkup:
     if language == "en":
         buttons = [
             [START_PRACTICE_LABEL_EN, PROFILE_LABEL_EN],
-            [CUSTOM_TOPIC_LABEL_EN, VOCABULARY_LABEL_EN],
+            [RULE_PRACTICE_LABEL_EN, CUSTOM_TOPIC_LABEL_EN],
+            [VOCABULARY_LABEL_EN],
             [VOCABULARY_REVIEW_LABEL_EN, SUPPORT_LABEL_EN],
             [SETTINGS_LABEL_EN, HELP_LABEL_EN],
             [FEEDBACK_LABEL_EN],
@@ -143,7 +147,8 @@ def main_menu(language: str | None = "ru") -> ReplyKeyboardMarkup:
     else:
         buttons = [
             [START_PRACTICE_LABEL, PROFILE_LABEL],
-            [CUSTOM_TOPIC_LABEL, VOCABULARY_LABEL],
+            [RULE_PRACTICE_LABEL, CUSTOM_TOPIC_LABEL],
+            [VOCABULARY_LABEL],
             [VOCABULARY_REVIEW_LABEL, SUPPORT_LABEL],
             [SETTINGS_LABEL, HELP_LABEL],
             [FEEDBACK_LABEL],
@@ -163,7 +168,7 @@ def settings_keyboard(language: str | None = "ru") -> InlineKeyboardMarkup:
         buttons = [
             [InlineKeyboardButton("🏆 Level", callback_data="settings:edit:english_level")],
             [InlineKeyboardButton("🎯 Goal", callback_data="settings:edit:goal")],
-            [InlineKeyboardButton("📚 Topics", callback_data="settings:edit:topics")],
+            [InlineKeyboardButton("📚 Interests (/train)", callback_data="settings:edit:topics")],
             [InlineKeyboardButton("🧾 Corrections", callback_data="settings:edit:correction_style")],
             [InlineKeyboardButton("🔔 Reminder", callback_data="settings:edit:reminder_time")],
             [InlineKeyboardButton("🔊 Bot voice", callback_data="settings:edit:tts_voice")],
@@ -174,7 +179,7 @@ def settings_keyboard(language: str | None = "ru") -> InlineKeyboardMarkup:
         buttons = [
             [InlineKeyboardButton("🏆 Уровень", callback_data="settings:edit:english_level")],
             [InlineKeyboardButton("🎯 Цель", callback_data="settings:edit:goal")],
-            [InlineKeyboardButton("📚 Темы", callback_data="settings:edit:topics")],
+            [InlineKeyboardButton("📚 Интересы (/train)", callback_data="settings:edit:topics")],
             [InlineKeyboardButton("🧾 Исправления", callback_data="settings:edit:correction_style")],
             [InlineKeyboardButton("🔔 Напоминание", callback_data="settings:edit:reminder_time")],
             [InlineKeyboardButton("🔊 Голосовые сообщения", callback_data="settings:edit:tts_voice")],
@@ -383,4 +388,15 @@ def skill_drill_keyboard(
         label = f"Потренировать: {skill_label}"
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton(label, callback_data=f"drill:start:{session_id}:{skill_slug}")]]
+    )
+
+
+def analysis_retry_keyboard(session_id: int, language: str | None = "ru") -> InlineKeyboardMarkup:
+    label = "Retry session analysis" if language == "en" else "Повторить разбор сессии"
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(label, callback_data=f"analysis:retry:{session_id}"),
+            ]
+        ]
     )

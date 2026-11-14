@@ -10,6 +10,7 @@ from mindup_bot.ai.roles import (
     Evaluator,
     MemoryUpdater,
     ProgressAnalyzer,
+    RulePracticeCoach,
     SkillDrillBuilder,
     TopicSelector,
     TopicVocabularyBuilder,
@@ -30,10 +31,10 @@ async def post_init(application: Application) -> None:
     await db.init()
     try:
         await application.bot.set_my_name("dialogum")
-        await application.bot.set_my_short_description("Ежедневная голосовая практика английского")
+        await application.bot.set_my_short_description("IELTS Speaking и персональный разбор ошибок")
         await application.bot.set_my_description(
-            "dialogum помогает 10 минут в день думать и говорить на английском: "
-            "voice-практика, короткий диалог и персональный разбор."
+            "dialogum помогает готовиться к IELTS Speaking: части 1–3, голосовая практика, "
+            "разбор ошибок с правилами и персональная история прогресса."
         )
     except Exception:
         logging.getLogger(__name__).exception("Failed to update Telegram bot profile")
@@ -66,7 +67,7 @@ def build_application() -> Application:
         {
             "settings": settings,
             "db": db,
-            "topic_selector": TopicSelector(gemini),
+            "topic_selector": TopicSelector(),
             "tutor": Tutor(gemini),
             "evaluator": Evaluator(gemini),
             "memory_updater": MemoryUpdater(gemini),
@@ -75,6 +76,7 @@ def build_application() -> Application:
             "vocabulary_extractor": VocabularyExtractor(gemini),
             "topic_vocabulary_builder": TopicVocabularyBuilder(gemini),
             "skill_drill_builder": SkillDrillBuilder(gemini),
+            "rule_practice_coach": RulePracticeCoach(gemini),
             "speech_to_text": SpeechToText(settings),
             "text_to_speech": TextToSpeech(settings),
         }
@@ -89,6 +91,9 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         level=logging.INFO,
     )
+    # Telegram Bot API URLs contain the bot token. Keep HTTP request logs out of normal logs.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     application = build_application()
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 

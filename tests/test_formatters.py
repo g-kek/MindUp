@@ -1,9 +1,9 @@
 from mindup_bot.ai.schemas import Feedback, ProgressInsight, SkillDrill, TopicVocabulary
 from mindup_bot.bot.formatters import (
     format_feedback,
+    format_processing_status,
     format_profile,
     format_progress_insight,
-    format_processing_status,
     format_settings,
     format_skill_drill,
     format_skill_drill_card,

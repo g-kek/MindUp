@@ -8,7 +8,9 @@ from pathlib import Path
 
 import edge_tts
 from google import genai
+from google.genai import types
 
+from mindup_bot.ai.gemini import model_generation_options
 from mindup_bot.ai.gemini_retry import call_with_model_fallback, model_candidates
 from mindup_bot.config import Settings
 
@@ -17,6 +19,7 @@ class SpeechToText:
     def __init__(self, settings: Settings) -> None:
         os.environ.setdefault("GEMINI_API_KEY", settings.gemini_api_key)
         self._client = genai.Client(api_key=settings.gemini_api_key)
+        self._thinking_level = settings.gemini_stt_thinking_level
         self._models = model_candidates(
             settings.gemini_stt_model,
             settings.gemini_stt_fallback_models,
@@ -28,8 +31,10 @@ class SpeechToText:
     def _transcribe_sync(self, audio_path: Path) -> str:
         uploaded = self._client.files.upload(file=str(audio_path))
         prompt = """
-Transcribe this Telegram voice message into English text.
-If the speaker uses Russian or another language, translate the meaning into English.
+Transcribe this voice message verbatim in the language(s) actually spoken.
+Preserve grammatical errors, wrong verb endings, missing articles, repetitions and false starts.
+Do not translate, correct, paraphrase or improve the speaker's words.
+Use [unclear] for words you cannot hear reliably; never guess a grammatical correction.
 Return only the transcript, no commentary.
 """.strip()
         response = call_with_model_fallback(
@@ -37,6 +42,9 @@ Return only the transcript, no commentary.
             lambda model: self._client.models.generate_content(
                 model=model,
                 contents=[prompt, uploaded],
+                config=types.GenerateContentConfig(
+                    **model_generation_options(model, self._thinking_level),
+                ),
             ),
             operation="transcribe",
         )

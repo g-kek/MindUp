@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 import aiosqlite
+
+from mindup_bot.ai.schemas import Feedback, RuleAnswerEvaluation, RuleLesson
+from mindup_bot.learning import grounded_feedback, learning_profile
 
 
 def _json_dumps(value: Any) -> str:
@@ -79,6 +83,43 @@ class Database:
                     voice_file_id TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(session_id) REFERENCES sessions(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS learning_observations (
+                    session_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    rule_id TEXT NOT NULL,
+                    outcome TEXT NOT NULL CHECK(outcome IN ('error', 'correct')),
+                    quote TEXT NOT NULL,
+                    details_json TEXT NOT NULL DEFAULT '{}',
+                    PRIMARY KEY(session_id, rule_id, outcome, quote),
+                    FOREIGN KEY(session_id) REFERENCES sessions(id),
+                    FOREIGN KEY(user_id) REFERENCES users(telegram_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_learning_user
+                    ON learning_observations(user_id, rule_id, session_id);
+
+                CREATE TABLE IF NOT EXISTS rule_practices (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    requested_topic TEXT NOT NULL,
+                    lesson_json TEXT NOT NULL,
+                    current_task INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    completed_at TEXT,
+                    FOREIGN KEY(user_id) REFERENCES users(telegram_id)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_rule_practice_active
+                    ON rule_practices(user_id) WHERE status = 'active';
+                CREATE TABLE IF NOT EXISTS rule_attempts (
+                    practice_id INTEGER NOT NULL,
+                    task_index INTEGER NOT NULL,
+                    answer TEXT NOT NULL,
+                    result_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY(practice_id, task_index),
+                    FOREIGN KEY(practice_id) REFERENCES rule_practices(id)
                 );
 
                 CREATE TABLE IF NOT EXISTS memories (
@@ -161,6 +202,12 @@ class Database:
             await self._ensure_column(db, "users", "pending_action", "TEXT")
             await self._ensure_column(db, "users", "review_item_id", "INTEGER")
             await self._ensure_column(db, "users", "tts_voice", "TEXT")
+            await self._ensure_column(
+                db, "sessions", "practice_mode", "TEXT NOT NULL DEFAULT 'conversation'"
+            )
+            await self._ensure_column(
+                db, "sessions", "topic_plan_json", "TEXT NOT NULL DEFAULT '{}'"
+            )
             await db.commit()
 
     @asynccontextmanager
@@ -389,14 +436,30 @@ class Database:
             )
             cursor = await db.execute(
                 """
-                INSERT INTO sessions (user_id, topic_id, topic_title, opening_question)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO sessions (
+                    user_id, topic_id, topic_title, opening_question, practice_mode, topic_plan_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user_id,
                     topic["topic_id"],
                     topic["title"],
                     topic["opening_question"],
+                    topic.get("practice_mode", "conversation"),
+                    _json_dumps(
+                        {
+                            key: topic[key]
+                            for key in (
+                                "second_question",
+                                "cue_card",
+                                "discussion_questions",
+                                "source_url",
+                                "source_label",
+                            )
+                            if key in topic
+                        }
+                    ),
                 ),
             )
             await db.execute(
@@ -421,7 +484,7 @@ class Database:
                 """,
                 (user_id,),
             )
-        return dict(row) if row else None
+        return self._session_from_row(row) if row else None
 
     async def get_session(self, session_id: int) -> dict[str, Any] | None:
         async with self.connect() as db:
@@ -444,20 +507,85 @@ class Database:
             )
             await db.commit()
 
-    async def complete_session(self, session_id: int, summary: str, feedback: dict[str, Any]) -> None:
+    async def complete_session(
+        self,
+        session_id: int,
+        summary: str,
+        feedback: dict[str, Any],
+        *,
+        retry_failed: bool = False,
+    ) -> bool:
+        # Session completion and evidence are committed together. Repeated completion
+        # cannot duplicate evidence or overwrite a completed evaluation.
         async with self.connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            session = await self._fetchone(db, "SELECT * FROM sessions WHERE id = ?", (session_id,))
+            if session is None:
+                return False
+            old_feedback = _json_loads(session["feedback_json"], {})
+            can_retry = (
+                retry_failed
+                and session["status"] == "completed"
+                and old_feedback.get("analysis_available") is False
+                and feedback.get("analysis_available") is True
+            )
+            if session["status"] != "active" and not can_retry:
+                return False
+            observations = []
+            if "errors" in feedback or "correct_usage" in feedback:
+                messages = await self._fetchall(
+                    db, "SELECT * FROM session_messages WHERE session_id = ?", (session_id,)
+                )
+                checked = grounded_feedback(
+                    Feedback.model_validate(feedback), [dict(m) for m in messages]
+                )
+                feedback = checked.model_dump()
+                if checked.analysis_available:
+                    observations.extend(
+                        (e.rule_id, "error", e.original, e.model_dump()) for e in checked.errors
+                    )
+                    observations.extend(
+                        (c.rule_id, "correct", c.quote, {}) for c in checked.correct_usage
+                    )
             await db.execute(
                 """
-                UPDATE sessions
-                SET status = 'completed',
-                    summary = ?,
-                    feedback_json = ?,
-                    completed_at = CURRENT_TIMESTAMP
-                WHERE id = ?
+                UPDATE sessions SET status = 'completed', summary = ?, feedback_json = ?,
+                    completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP) WHERE id = ?
                 """,
                 (summary, _json_dumps(feedback), session_id),
             )
+            await db.executemany(
+                """
+                INSERT OR IGNORE INTO learning_observations
+                    (session_id, user_id, rule_id, outcome, quote, details_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (session_id, session["user_id"], rule, outcome, quote, _json_dumps(details))
+                    for rule, outcome, quote, details in observations
+                ],
+            )
             await db.commit()
+            return True
+
+    async def get_learning_profile(self, user_id: int) -> list[dict[str, Any]]:
+        async with self.connect() as db:
+            rows = await self._fetchall(
+                db,
+                """
+                SELECT o.*, s.completed_at FROM learning_observations o
+                JOIN sessions s ON s.id = o.session_id
+                WHERE o.user_id = ? AND s.user_id = ? AND s.status = 'completed'
+                ORDER BY s.completed_at, s.id, o.rule_id, o.outcome, o.quote
+                """,
+                (user_id, user_id),
+            )
+        observations = []
+        for row in rows:
+            item = dict(row)
+            item["details"] = _json_loads(item.pop("details_json"), {})
+            observations.append(item)
+        return learning_profile(observations)
 
     async def close_session_without_analysis(self, session_id: int, summary: str) -> None:
         async with self.connect() as db:
@@ -819,6 +947,146 @@ class Database:
             )
             await db.commit()
 
+    async def create_rule_practice(
+        self,
+        user_id: int,
+        requested_topic: str,
+        lesson: RuleLesson,
+    ) -> int:
+        async with self.connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            speaking = await self._fetchone(
+                db,
+                "SELECT id FROM sessions WHERE user_id = ? AND status = 'active'",
+                (user_id,),
+            )
+            if speaking:
+                raise ValueError("Finish the speaking session first")
+            await db.execute(
+                "UPDATE rule_practices SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP "
+                "WHERE user_id = ? AND status = 'active'",
+                (user_id,),
+            )
+            cursor = await db.execute(
+                "INSERT INTO rule_practices (user_id, requested_topic, lesson_json) VALUES (?, ?, ?)",
+                (user_id, requested_topic, lesson.model_dump_json()),
+            )
+            await db.execute(
+                "UPDATE users SET pending_action = 'rule_answer', custom_topic_pending = 0 "
+                "WHERE telegram_id = ?",
+                (user_id,),
+            )
+            await db.commit()
+            return int(cursor.lastrowid)
+
+    async def get_rule_practice(self, practice_id: int, user_id: int) -> dict[str, Any] | None:
+        async with self.connect() as db:
+            row = await self._fetchone(
+                db,
+                "SELECT * FROM rule_practices WHERE id = ? AND user_id = ?",
+                (practice_id, user_id),
+            )
+        return self._rule_practice_from_row(row) if row else None
+
+    async def get_active_rule_practice(self, user_id: int) -> dict[str, Any] | None:
+        async with self.connect() as db:
+            row = await self._fetchone(
+                db,
+                "SELECT * FROM rule_practices WHERE user_id = ? AND status = 'active'",
+                (user_id,),
+            )
+        return self._rule_practice_from_row(row) if row else None
+
+    async def get_rule_attempts(self, practice_id: int, user_id: int) -> list[dict[str, Any]]:
+        async with self.connect() as db:
+            rows = await self._fetchall(
+                db,
+                "SELECT a.* FROM rule_attempts a JOIN rule_practices p ON p.id = a.practice_id "
+                "WHERE a.practice_id = ? AND p.user_id = ? ORDER BY a.task_index",
+                (practice_id, user_id),
+            )
+        return [{**dict(row), "result": _json_loads(row["result_json"], {})} for row in rows]
+
+    async def record_rule_attempt(
+        self,
+        practice_id: int,
+        user_id: int,
+        task_index: int,
+        answer: str,
+        result: RuleAnswerEvaluation,
+    ) -> bool:
+        async with self.connect() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            row = await self._fetchone(
+                db,
+                "SELECT * FROM rule_practices WHERE id = ? AND user_id = ? AND status = 'active'",
+                (practice_id, user_id),
+            )
+            if row is None or row["current_task"] != task_index:
+                return False
+            lesson = RuleLesson.model_validate_json(row["lesson_json"])
+            await db.execute(
+                "INSERT INTO rule_attempts (practice_id, task_index, answer, result_json) "
+                "VALUES (?, ?, ?, ?)",
+                (practice_id, task_index, answer, result.model_dump_json()),
+            )
+            completed = task_index + 1 == len(lesson.tasks)
+            await db.execute(
+                "UPDATE rule_practices SET current_task = current_task + 1, status = ?, "
+                "completed_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END WHERE id = ?",
+                ("completed" if completed else "active", completed, practice_id),
+            )
+            if completed:
+                await db.execute(
+                    "UPDATE users SET pending_action = NULL WHERE telegram_id = ? "
+                    "AND pending_action = 'rule_answer'",
+                    (user_id,),
+                )
+            await db.commit()
+            return True
+
+    async def stop_rule_practice(self, practice_id: int, user_id: int) -> bool:
+        async with self.connect() as db:
+            cursor = await db.execute(
+                "UPDATE rule_practices SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND user_id = ? AND status = 'active'",
+                (practice_id, user_id),
+            )
+            if cursor.rowcount:
+                await db.execute(
+                    "UPDATE users SET pending_action = NULL WHERE telegram_id = ? "
+                    "AND pending_action IN ('rule_answer', 'rule_topic')",
+                    (user_id,),
+                )
+            await db.commit()
+            return bool(cursor.rowcount)
+
+    async def get_rule_practice_history(self, user_id: int) -> list[dict[str, Any]]:
+        async with self.connect() as db:
+            rows = await self._fetchall(
+                db,
+                "SELECT * FROM rule_practices WHERE user_id = ? AND current_task > 0 "
+                "ORDER BY id DESC LIMIT 3",
+                (user_id,),
+            )
+        history = []
+        for row in rows:
+            attempts = await self.get_rule_attempts(row["id"], user_id)
+            history.append(
+                {
+                    "requested_topic": row["requested_topic"],
+                    "status": row["status"],
+                    "correct": sum(a["result"].get("outcome") == "correct" for a in attempts),
+                    "attempted": len(attempts),
+                    "recent_feedback": [a["result"] for a in attempts[-2:]],
+                }
+            )
+        return history
+
+    @staticmethod
+    def _rule_practice_from_row(row: aiosqlite.Row) -> dict[str, Any]:
+        return {**dict(row), "lesson": _json_loads(row["lesson_json"], {})}
+
     async def add_contact_message(
         self,
         *,
@@ -863,6 +1131,7 @@ class Database:
     def _session_from_row(self, row: aiosqlite.Row) -> dict[str, Any]:
         session = dict(row)
         session["feedback"] = _json_loads(session.get("feedback_json"), {})
+        session["topic_plan"] = _json_loads(session.get("topic_plan_json"), {})
         return session
 
 
@@ -874,7 +1143,7 @@ def _calculate_daily_streak(completed_dates: list[str]) -> dict[str, Any]:
         },
         reverse=True,
     )
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
     if not parsed_dates:
         return {
             "current": 0,

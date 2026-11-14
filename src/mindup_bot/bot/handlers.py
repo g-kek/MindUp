@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
 from html import escape
 from typing import Any
@@ -43,13 +43,16 @@ from mindup_bot.ai.schemas import (
 from mindup_bot.bot.formatters import (
     format_feedback,
     format_help,
+    format_ielts_assessment,
+    format_language_error,
+    format_learning_profile,
+    format_no_analysis_finished,
+    format_processing_status,
     format_profile,
     format_progress_insight,
-    format_processing_status,
     format_settings,
-    format_skill_drill_card,
-    format_no_analysis_finished,
     format_short_session_warning,
+    format_skill_drill_card,
     format_streak,
     format_topic_vocabulary_card,
     format_vocabulary,
@@ -91,9 +94,9 @@ from mindup_bot.bot.keyboards import (
     settings_keyboard,
     settings_option_keyboard,
     settings_options_for,
+    short_session_finish_keyboard,
     skill_drill_keyboard,
     skill_drill_pager_keyboard,
-    short_session_finish_keyboard,
     topic_vocabulary_pager_keyboard,
     topics_keyboard,
     vocabulary_pager_keyboard,
@@ -101,6 +104,8 @@ from mindup_bot.bot.keyboards import (
 from mindup_bot.bot.reminders import schedule_user_reminder
 from mindup_bot.config import Settings
 from mindup_bot.db import Database
+from mindup_bot.ielts import IELTS_TURNS, apply_ielts_flow, ensure_ielts_plan
+from mindup_bot.learning import RULES, grounded_feedback, priority_error_rule, rule_label
 from mindup_bot.services.speech import SpeechToText, TextToSpeech
 
 logger = logging.getLogger(__name__)
@@ -120,6 +125,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("menu", menu))
     application.add_handler(CommandHandler("finish", finish))
     application.add_handler(CommandHandler("progress", progress))
+    application.add_handler(CommandHandler("ielts", ielts_practice))
     application.add_handler(CommandHandler("topic", custom_topic))
     application.add_handler(CommandHandler("vocabulary", vocabulary))
     application.add_handler(CommandHandler("review", vocabulary_review))
@@ -183,7 +189,7 @@ async def progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     db: Database = context.application.bot_data["db"]
     data = await db.get_progress(user["telegram_id"])
     language = user.get("interface_language")
-    since = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+    since = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
     recent_sessions = await db.get_completed_sessions(user["telegram_id"], limit=8)
     last_day_sessions = await db.get_completed_sessions_since(user["telegram_id"], since, limit=8)
     if recent_sessions:
@@ -203,10 +209,22 @@ async def progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         insight = fallback_progress_insight(language, data)
 
     await update.effective_message.reply_text(
-        f"{format_profile(user, data)}\n\n{format_progress_insight(insight, language)}",
+        format_profile(user, data),
         reply_markup=await main_menu_reply_markup(context, user),
         parse_mode=ParseMode.HTML,
     )
+    await update.effective_message.reply_text(
+        format_progress_insight(insight, language),
+        parse_mode=ParseMode.HTML,
+    )
+    await update.effective_message.reply_text(
+        format_learning_profile(user.get("learning_history", []), language),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def ielts_practice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await start_practice(update, context, await ensure_user(update, context))
 
 
 async def custom_topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -431,6 +449,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data.startswith("drill:"):
         await handle_drill_callback(update, context, user, data)
+        return
+
+    if data.startswith("errors:"):
+        await handle_error_callback(update, context, user, data)
         return
 
     if data.startswith("onb:"):
@@ -682,6 +704,47 @@ async def handle_topic_vocabulary_callback(
             safe_page,
             len(topic_vocabulary.items),
             language,
+        ),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def handle_error_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user: dict[str, Any],
+    callback_data: str,
+) -> None:
+    query = update.callback_query
+    if query is None or query.message is None:
+        return
+    parts = callback_data.split(":")
+    try:
+        if len(parts) != 4 or parts[1] != "page":
+            raise ValueError("Invalid error page")
+        session_id, page = int(parts[2]), int(parts[3])
+    except ValueError:
+        await query.answer()
+        return
+    db: Database = context.application.bot_data["db"]
+    session = await db.get_session(session_id)
+    if session is None or session["user_id"] != user["telegram_id"]:
+        await query.answer()
+        return
+    assessment = _feedback_from_session(session, user.get("interface_language"))
+    if not assessment.errors:
+        await query.answer()
+        return
+    await query.answer()
+    page = min(max(page, 0), len(assessment.errors) - 1)
+    await edit_callback_message(
+        query,
+        format_language_error(assessment.errors[page], user.get("interface_language")),
+        reply_markup=vocabulary_pager_keyboard(
+            page,
+            len(assessment.errors),
+            user.get("interface_language"),
+            callback_prefix=f"errors:page:{session_id}",
         ),
         parse_mode=ParseMode.HTML,
     )
@@ -1058,9 +1121,11 @@ async def start_practice(
         return
 
     message = (
-        "🎙 Practice started. Use the keyboard below while we are speaking."
+        "🎙 Short IELTS Speaking practice: Part 1 → Part 2 → Part 3 (5 answers). "
+        "Corrections follow your settings; this is not a timed mock exam."
         if user.get("interface_language") == "en"
-        else "🎙 Практика началась. Используй клавиатуру ниже во время speaking."
+        else "🎙 Короткая практика IELTS Speaking: Part 1 → Part 2 → Part 3 (5 ответов). "
+        "Исправления — по твоим настройкам. Это не полный пробный экзамен на время."
     )
     await update.effective_message.reply_text(
         message,
@@ -1076,12 +1141,13 @@ async def start_practice(
     except Exception:
         logger.exception("Topic selection failed; using fallback topic")
         topic = fallback_topic()
+    topic = ensure_ielts_plan(topic)
     session_id = await db.create_session(user["telegram_id"], topic.model_dump())
     message_id = await db.add_message(session_id, "tutor", topic.opening_question)
 
     if user.get("interface_language") == "en":
         text = (
-            "🎙 Speaking · Task\n"
+            "🎙 IELTS Speaking · Part 1\n"
             "━━━━━━━━━━━━\n\n"
             f"{topic.opening_question}\n\n"
             "⏱ Recording: up to 60 seconds\n"
@@ -1089,7 +1155,7 @@ async def start_practice(
         )
     else:
         text = (
-            "🎙 Speaking · Задание\n"
+            "🎙 IELTS Speaking · Part 1\n"
             "━━━━━━━━━━━━\n\n"
             f"{topic.opening_question}\n\n"
             "⏱ Запись: до 60 секунд\n"
@@ -1136,11 +1202,12 @@ async def start_custom_topic_session(
         logger.exception("Custom topic creation failed; using fallback topic")
         topic = fallback_custom_topic(requested_topic)
 
+    topic = ensure_ielts_plan(topic)
     session_id = await db.create_session(user["telegram_id"], topic.model_dump())
     message_id = await db.add_message(session_id, "tutor", topic.opening_question)
     if user.get("interface_language") == "en":
         text = (
-            f"🎙 Speaking · {topic.title}\n"
+            f"🎙 IELTS Speaking · Part 1 · {topic.title}\n"
             "━━━━━━━━━━━━\n\n"
             f"{topic.opening_question}\n\n"
             "⏱ Recording: up to 60 seconds\n"
@@ -1148,7 +1215,7 @@ async def start_custom_topic_session(
         )
     else:
         text = (
-            f"🎙 Speaking · {topic.title}\n"
+            f"🎙 IELTS Speaking · Part 1 · {topic.title}\n"
             "━━━━━━━━━━━━\n\n"
             f"{topic.opening_question}\n\n"
             "⏱ Запись: до 60 секунд\n"
@@ -1357,12 +1424,16 @@ async def handle_practice_message(update: Update, context: ContextTypes.DEFAULT_
             messages=messages,
             user_message=user_text,
             turn_number=turn_number,
-            min_turns=settings_obj.min_dialogue_turns,
-            max_turns=settings_obj.max_dialogue_turns,
+            min_turns=(IELTS_TURNS if session.get("practice_mode") == "ielts"
+                       else settings_obj.min_dialogue_turns),
+            max_turns=(IELTS_TURNS if session.get("practice_mode") == "ielts"
+                       else settings_obj.max_dialogue_turns),
         )
     except Exception:
         logger.exception("Tutor response failed; using fallback reply")
-        should_finish = turn_number >= settings_obj.max_dialogue_turns
+        max_turns = (IELTS_TURNS if session.get("practice_mode") == "ielts"
+                     else settings_obj.max_dialogue_turns)
+        should_finish = turn_number >= max_turns
         follow_up = None if should_finish else "Can you give one concrete example?"
         reply = TutorReply(
             reply="I understand your idea. Let's make it a little more specific.",
@@ -1370,6 +1441,7 @@ async def handle_practice_message(update: Update, context: ContextTypes.DEFAULT_
             soft_correction=None,
             should_finish=should_finish,
         )
+    reply = apply_ielts_flow(reply, session, turn_number)
     reply_text = reply.text_for_user()
     message_id = await db.add_message(session["id"], "tutor", reply_text)
     await send_text_and_voice(
@@ -1396,6 +1468,7 @@ async def extract_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return ""
 
     settings_obj: Settings = context.application.bot_data["settings"]
+    settings_obj.audio_dir.mkdir(parents=True, exist_ok=True)
     speech_to_text: SpeechToText = context.application.bot_data["speech_to_text"]
     incoming_path = settings_obj.audio_dir / f"incoming-{uuid.uuid4().hex}.ogg"
 
@@ -1450,6 +1523,7 @@ async def finish_session(
     evaluator: Evaluator = context.application.bot_data["evaluator"]
     memory_updater: MemoryUpdater = context.application.bot_data["memory_updater"]
 
+    user = {**user, "learning_history": await db.get_learning_profile(user["telegram_id"])}
     language = "en" if user.get("interface_language") == "en" else "ru"
     processing_message = await update.effective_message.reply_text(
         format_processing_status(1, language),
@@ -1469,44 +1543,48 @@ async def finish_session(
     except Exception:
         logger.exception("Evaluation failed; using fallback feedback")
         feedback = fallback_feedback(language)
+    feedback = grounded_feedback(feedback, messages)
     await db.complete_session(session["id"], feedback.summary, feedback.model_dump())
     await update_processing_message(processing_message, format_processing_status(3, language))
 
-    try:
-        memory_update = await memory_updater.update(
-            profile=user,
-            session=session,
-            messages=messages,
-            feedback=feedback,
-        )
-        await db.add_memories(
-            user["telegram_id"],
-            [memory.model_dump() for memory in memory_update.memories],
-        )
-    except Exception:
-        logger.exception("Failed to update memory")
+    if feedback.analysis_available:
+        try:
+            memory_update = await memory_updater.update(
+                profile=user,
+                session=session,
+                messages=messages,
+                feedback=feedback,
+            )
+            await db.add_memories(
+                user["telegram_id"],
+                [memory.model_dump() for memory in memory_update.memories],
+            )
+        except Exception:
+            logger.exception("Failed to update memory")
 
-    vocabulary_extractor: VocabularyExtractor = context.application.bot_data["vocabulary_extractor"]
-    try:
-        vocabulary_update = await vocabulary_extractor.extract(
-            profile=user,
-            session=session,
-            messages=messages,
-            feedback=feedback,
-            language=language,
-        )
-        await db.upsert_vocabulary_items(
-            user["telegram_id"],
-            session["id"],
-            [phrase.model_dump() for phrase in vocabulary_update.phrases],
-        )
-    except Exception:
-        logger.exception("Failed to update vocabulary; using feedback phrases")
-        await db.upsert_vocabulary_items(
-            user["telegram_id"],
-            session["id"],
-            fallback_vocabulary_from_feedback(feedback, language),
-        )
+        vocabulary_extractor: VocabularyExtractor = context.application.bot_data[
+            "vocabulary_extractor"
+        ]
+        try:
+            vocabulary_update = await vocabulary_extractor.extract(
+                profile=user,
+                session=session,
+                messages=messages,
+                feedback=feedback,
+                language=language,
+            )
+            await db.upsert_vocabulary_items(
+                user["telegram_id"],
+                session["id"],
+                [phrase.model_dump() for phrase in vocabulary_update.phrases],
+            )
+        except Exception:
+            logger.exception("Failed to update vocabulary; using feedback phrases")
+            await db.upsert_vocabulary_items(
+                user["telegram_id"],
+                session["id"],
+                fallback_vocabulary_from_feedback(feedback, language),
+            )
     await update_processing_message(processing_message, format_processing_status(4, language))
 
     await update.effective_message.reply_text(
@@ -1514,39 +1592,44 @@ async def finish_session(
         reply_markup=main_menu(user.get("interface_language")),
         parse_mode=ParseMode.HTML,
     )
+    if feedback.errors:
+        await update.effective_message.reply_text(
+            format_language_error(feedback.errors[0], language),
+            parse_mode=ParseMode.HTML,
+            reply_markup=vocabulary_pager_keyboard(
+                0,
+                len(feedback.errors),
+                language,
+                callback_prefix=f"errors:page:{session['id']}",
+            ),
+        )
+    if feedback.ielts is not None:
+        await update.effective_message.reply_text(
+            format_ielts_assessment(feedback.ielts, language),
+            parse_mode=ParseMode.HTML,
+        )
     progress_data = await db.get_progress(user["telegram_id"])
     await update.effective_message.reply_text(
         format_streak(progress_data, language),
         reply_markup=main_menu(user.get("interface_language")),
         parse_mode=ParseMode.HTML,
     )
-    weak_score = weakest_feedback_score(feedback)
-    if weak_score is not None:
-        skill_slug = skill_slug_for(weak_score.name)
-        if language == "en":
+    if feedback.analysis_available:
+        target_rule = priority_error_rule(feedback, user.get("learning_history", []))
+        weak_score = weakest_feedback_score(feedback)
+        if target_rule or weak_score:
+            skill_slug = target_rule or skill_slug_for(weak_score.name)
+            label = rule_label(target_rule, language) if target_rule else weak_score.name
             prompt = (
-                "<b>🎯 Practice after feedback</b>\n"
-                "━━━━━━━━━━━━\n\n"
-                f"<b>Lowest area:</b> {escape(weak_score.name)} ({weak_score.score}/5).\n\n"
-                f"Want to practice <b>{escape(weak_score.name)}</b> with short cards on this topic?"
+                "🎯 Practise this session's priority: "
+                if language == "en"
+                else "🎯 Отработать приоритет этой сессии: "
+            ) + escape(label)
+            await update.effective_message.reply_text(
+                prompt,
+                parse_mode=ParseMode.HTML,
+                reply_markup=skill_drill_keyboard(session["id"], skill_slug, label, language),
             )
-        else:
-            prompt = (
-                "<b>🎯 Тренировка после разбора</b>\n"
-                "━━━━━━━━━━━━\n\n"
-                f"<b>Самая слабая зона:</b> {escape(weak_score.name)} ({weak_score.score}/5).\n\n"
-                f"Хочешь потренировать <b>{escape(weak_score.name)}</b> на этой теме короткими карточками?"
-            )
-        await update.effective_message.reply_text(
-            prompt,
-            reply_markup=skill_drill_keyboard(
-                session["id"],
-                skill_slug,
-                weak_score.name,
-                user.get("interface_language"),
-            ),
-            parse_mode=ParseMode.HTML,
-        )
 
 
 async def finish_session_without_analysis(
@@ -1831,12 +1914,14 @@ async def ensure_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> dic
     chat = update.effective_chat
     if telegram_user is None or chat is None:
         raise RuntimeError("Telegram update has no effective user or chat")
-    return await db.upsert_user(
+    user = await db.upsert_user(
         telegram_id=telegram_user.id,
         chat_id=chat.id,
         username=telegram_user.username,
         first_name=telegram_user.first_name,
     )
+    user["learning_history"] = await db.get_learning_profile(telegram_user.id)
+    return user
 
 
 def _next_onboarding_step(step: str) -> str | None:
@@ -1880,17 +1965,21 @@ async def build_skill_drill(
     language: str | None,
 ) -> SkillDrill:
     builder: SkillDrillBuilder = context.application.bot_data["skill_drill_builder"]
+    db: Database = context.application.bot_data["db"]
+    user = {**user, "learning_history": await db.get_learning_profile(user["telegram_id"])}
     try:
         return await builder.build(
             profile=user,
             session=session,
             feedback=feedback,
-            skill=skill.replace("_", " "),
+            skill=skill if skill in RULES else skill.replace("_", " "),
             language="en" if language == "en" else "ru",
         )
     except Exception:
         logger.exception("Skill drill generation failed; using fallback drill")
-        return fallback_skill_drill(session, skill, "en" if language == "en" else "ru")
+        return fallback_skill_drill(
+            session, skill, "en" if language == "en" else "ru", feedback=feedback
+        )
 
 
 def weakest_feedback_score(feedback: Feedback) -> ScoreItem | None:
@@ -2031,7 +2120,40 @@ def fallback_topic_vocabulary(session: dict[str, Any], language: str) -> TopicVo
     return TopicVocabulary.model_validate({"title": str(topic), "items": items})
 
 
-def fallback_skill_drill(session: dict[str, Any], skill: str, language: str) -> SkillDrill:
+def fallback_skill_drill(
+    session: dict[str, Any],
+    skill: str,
+    language: str,
+    feedback: Feedback | None = None,
+) -> SkillDrill:
+    error = next((e for e in feedback.errors if e.rule_id == skill), None) if feedback else None
+    if error:
+        en = language == "en"
+        prompts = (
+            [
+                f"Correct your sentence: {error.original}",
+                f"Say the corrected version from memory: {error.original}",
+                "Explain the rule, then say your corrected sentence.",
+                "Record the corrected sentence slowly, then at a natural pace.",
+                "Use the corrected sentence in a short IELTS answer with a reason and example.",
+            ]
+            if en
+            else [
+                f"Исправь свою фразу: {error.original}",
+                f"Вспомни исправленную версию: {error.original}",
+                "Объясни правило и произнеси исправленную фразу.",
+                "Запиши исправленную фразу медленно, затем в обычном темпе.",
+                "Включи исправленную фразу в ответ IELTS с причиной и примером.",
+            ]
+        )
+        return SkillDrill(
+            skill=skill,
+            title=rule_label(skill, language),
+            tasks=[
+                {"prompt": prompt, "answer": error.corrected, "explanation": error.explanation}
+                for prompt in prompts
+            ],
+        )
     topic = session.get("topic_title") or "this topic"
     skill_title = skill.replace("_", " ")
     if language == "en":
@@ -2263,9 +2385,9 @@ def fallback_progress_insight(language: str | None, progress_data: dict[str, Any
         return ProgressInsight(
             overall_summary=f"You have completed {completed_count} practice sessions.",
             recent_change="Use the latest feedback to track recurring strengths and weak spots.",
-            last_day_summary=progress_data.get("last_summary") or "No detailed last-day summary saved.",
+            last_day_summary="Daily analysis is unavailable; no conclusion about today yet.",
             next_focus="Add one concrete example to every answer.",
-            achievements=["You are building a regular speaking habit."],
+            achievements=[],
         )
 
     if completed_count == 0:
@@ -2279,52 +2401,27 @@ def fallback_progress_insight(language: str | None, progress_data: dict[str, Any
     return ProgressInsight(
         overall_summary=f"Ты завершил {completed_count} практических сессий.",
         recent_change="Используй последний разбор, чтобы отслеживать повторяющиеся сильные и слабые места.",
-        last_day_summary=progress_data.get("last_summary") or "Детальный итог за день пока не сохранен.",
+        last_day_summary="Анализ за сутки недоступен; выводов о сегодняшнем прогрессе пока нет.",
         next_focus="Добавляй один конкретный пример к каждому ответу.",
-        achievements=["Ты формируешь регулярную speaking-практику."],
+        achievements=[],
     )
 
 
 def fallback_feedback(language: str = "ru") -> Feedback:
-    if language == "en":
-        return Feedback.model_validate(
-            {
-                "summary": "You completed a short English speaking practice session.",
-                "main_strength": "You communicated your idea clearly enough to continue a dialogue.",
-                "main_issue": "Try to add more concrete examples and use fuller sentences.",
-                "improved_phrases": [
-                    {"original": "I think yes", "improved": "I tend to agree because..."},
-                    {"original": "It is good for me", "improved": "It works well for me because..."},
-                ],
-                "micro_homework": "Record a 60-second answer with one reason and one example.",
-                "estimated_cefr": "B1",
-                "scores": [
-                    {"name": "Clarity", "score": 3, "note": "Mostly understandable."},
-                    {"name": "Vocabulary", "score": 3, "note": "Enough for the topic."},
-                    {"name": "Grammar", "score": 3, "note": "Some simple patterns need tightening."},
-                    {"name": "Argumentation", "score": 3, "note": "Add more examples."},
-                ],
-            }
-        )
-
-    return Feedback.model_validate(
-        {
-            "summary": "Ты завершил короткую speaking-сессию на английском.",
-            "main_strength": "Ты достаточно ясно передал мысль, чтобы поддержать диалог.",
-            "main_issue": "Старайся добавлять больше конкретных примеров и использовать более полные фразы.",
-            "improved_phrases": [
-                {"original": "I think yes", "improved": "I tend to agree because..."},
-                {"original": "It is good for me", "improved": "It works well for me because..."},
-            ],
-            "micro_homework": "Запиши ответ на 60 секунд: одна причина и один пример.",
-            "estimated_cefr": "B1",
-            "scores": [
-                {"name": "Ясность", "score": 3, "note": "В целом понятно."},
-                {"name": "Словарь", "score": 3, "note": "Достаточно для темы."},
-                {"name": "Грамматика", "score": 3, "note": "Некоторые простые конструкции стоит подтянуть."},
-                {"name": "Аргументация", "score": 3, "note": "Добавляй больше примеров."},
-            ],
-        }
+    en = language == "en"
+    return Feedback(
+        summary="Practice saved; analysis is temporarily unavailable."
+        if en
+        else "Практика сохранена; разбор временно недоступен.",
+        main_strength="Not assessed." if en else "Не оценено.",
+        main_issue="Not assessed." if en else "Не оценено.",
+        improved_phrases=[],
+        scores=[],
+        analysis_available=False,
+        micro_homework="Try another short IELTS answer later."
+        if en
+        else "Позже попробуй ещё один короткий ответ IELTS.",
+        estimated_cefr="Not assessed" if en else "Не оценено",
     )
 
 

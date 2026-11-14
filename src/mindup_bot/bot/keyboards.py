@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 
-
 START_PRACTICE_LABEL = "🚀 Начать практику"
 PROFILE_LABEL = "📊 Мой профиль"
 SETTINGS_LABEL = "⚙️ Настройки"
@@ -45,6 +44,7 @@ LEVEL_OPTIONS_EN = [
 ]
 
 GOAL_OPTIONS = [
+    ("🎓 IELTS Speaking", "ielts"),
     ("💼 Работа", "work"),
     ("🌍 Путешествия", "travel"),
     ("🎓 Учеба", "study"),
@@ -54,6 +54,7 @@ GOAL_OPTIONS = [
 ]
 
 GOAL_OPTIONS_EN = [
+    ("🎓 IELTS Speaking", "ielts"),
     ("💼 Work", "work"),
     ("🌍 Travel", "travel"),
     ("🎓 Study", "study"),

@@ -28,8 +28,10 @@ class SpeechToText:
     def _transcribe_sync(self, audio_path: Path) -> str:
         uploaded = self._client.files.upload(file=str(audio_path))
         prompt = """
-Transcribe this Telegram voice message into English text.
-If the speaker uses Russian or another language, translate the meaning into English.
+Transcribe this voice message verbatim in the language(s) actually spoken.
+Preserve grammatical errors, wrong verb endings, missing articles, repetitions and false starts.
+Do not translate, correct, paraphrase or improve the speaker's words.
+Use [unclear] for words you cannot hear reliably; never guess a grammatical correction.
 Return only the transcript, no commentary.
 """.strip()
         response = call_with_model_fallback(

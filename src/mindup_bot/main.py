@@ -30,10 +30,10 @@ async def post_init(application: Application) -> None:
     await db.init()
     try:
         await application.bot.set_my_name("dialogum")
-        await application.bot.set_my_short_description("Ежедневная голосовая практика английского")
+        await application.bot.set_my_short_description("IELTS Speaking и персональный разбор ошибок")
         await application.bot.set_my_description(
-            "dialogum помогает 10 минут в день думать и говорить на английском: "
-            "voice-практика, короткий диалог и персональный разбор."
+            "dialogum помогает готовиться к IELTS Speaking: части 1–3, голосовая практика, "
+            "разбор ошибок с правилами и персональная история прогресса."
         )
     except Exception:
         logging.getLogger(__name__).exception("Failed to update Telegram bot profile")

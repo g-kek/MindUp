@@ -2,10 +2,19 @@ from __future__ import annotations
 
 from html import escape
 
-from mindup_bot.ai.schemas import Feedback, ProgressInsight, SkillDrill, TopicVocabulary
+from mindup_bot.ai.schemas import (
+    Feedback,
+    IELTSAssessment,
+    LanguageError,
+    ProgressInsight,
+    SkillDrill,
+    TopicVocabulary,
+)
+from mindup_bot.learning import IELTS_SOURCE, RULES, rule_label
 
 GOAL_LABELS = {
     "ru": {
+        "ielts": "IELTS Speaking",
         "work": "Работа",
         "travel": "Путешествия",
         "study": "Учеба",
@@ -14,6 +23,7 @@ GOAL_LABELS = {
         "thinking_self_expression": "Мышление и самовыражение",
     },
     "en": {
+        "ielts": "IELTS Speaking",
         "work": "Work",
         "travel": "Travel",
         "study": "Study",
@@ -143,6 +153,9 @@ def _label(label: str, value: object) -> str:
 
 
 def format_feedback(feedback: Feedback, language: str | None = "ru") -> str:
+    if not feedback.analysis_available:
+        return ("<b>🧾 Session feedback</b>\n\n" if language == "en" else
+                "<b>🧾 Разбор сессии</b>\n\n") + _value(feedback.summary)
     phrases = "\n".join(
         f"• <i>{_value(item.original)}</i> → <b>{_value(item.improved)}</b>"
         for item in feedback.improved_phrases
@@ -180,6 +193,123 @@ def format_feedback(feedback: Feedback, language: str | None = "ru") -> str:
     )
 
 
+def format_language_error(error: LanguageError, language: str | None = "ru") -> str:
+    en = language == "en"
+    labels = (
+        ["Rule", "Possible cause (hypothesis)", "Evidence / uncertainty", "Next step"]
+        if en
+        else [
+            "Правило",
+            "Возможная причина (гипотеза)",
+            "Наблюдение / неопределённость",
+            "Как отработать",
+        ]
+    )
+    source = "Reference" if en else "Справочник"
+    if error.rule_id in {"collocations", "idioms", "word_choice"}:
+        source += " · Cambridge Grammar"
+    else:
+        source += " · British Council"
+    return (
+        f"<b>🔎 {_value(rule_label(error.rule_id, language))}</b>\n\n"
+        f"<i>{_value(error.original)}</i> → <b>{_value(error.corrected)}</b>\n\n"
+        f"{_label(labels[0], error.explanation)}\n\n"
+        f"{_label(labels[1], error.likely_cause)}\n"
+        f"{_label(labels[2], error.cause_evidence)}\n\n"
+        f"{_label(labels[3], error.next_step)}\n\n"
+        f'<a href="{escape(RULES[error.rule_id][2], quote=True)}">{source}</a>'
+    )
+
+
+def format_ielts_assessment(assessment: IELTSAssessment, language: str | None = "ru") -> str:
+    en = language == "en"
+    limitation = (
+        "Pronunciation and spoken fluency are not assessed from a transcript. "
+        "These are practice notes, not an official band score."
+        if en
+        else "По расшифровке нельзя оценить произношение и беглость речи. "
+        "Это учебный разбор, без общего балла IELTS."
+    )
+    return (
+        "<b>IELTS Speaking</b>\n\n"
+        + _label("Coherence" if en else "Связность", assessment.coherence)
+        + "\n\n"
+        + _label("Lexical resource" if en else "Лексика", assessment.lexical_resource)
+        + "\n\n"
+        + _label(
+            "Grammar" if en else "Грамматический диапазон и точность",
+            assessment.grammatical_range_accuracy,
+        )
+        + "\n\n"
+        + limitation
+        + f'\n<a href="{IELTS_SOURCE}">IELTS · Speaking criteria</a>'
+    )
+
+
+def format_learning_profile(history: list[dict], language: str | None = "ru") -> str:
+    en = language == "en"
+    title = "Observed learning patterns" if en else "Наблюдения по твоей речи"
+    parts = [f"<b>🎯 {title}</b>"]
+    if not history:
+        parts.append(
+            "Not enough rule evidence yet. Complete a new practice."
+            if en
+            else "Пока нет наблюдений по правилам. Заверши новую практику."
+        )
+        return "\n\n".join(parts)
+    statuses = (
+        {
+            "recurring": "Repeating",
+            "needs_practice": "Needs practice",
+            "improving": "Improving",
+            "stabilizing": "Becoming consistent",
+            "observed": "Correct usage observed",
+        }
+        if en
+        else {
+            "recurring": "Повторяется",
+            "needs_practice": "Нужно отработать",
+            "improving": "Есть улучшение",
+            "stabilizing": "Закрепляется",
+            "observed": "Есть верное применение",
+        }
+    )
+    for item in history:
+        rule = rule_label(item["rule_id"], language)
+        counts = (
+            f"errors in {item['error_sessions']}/{item['observed_sessions']} observed sessions"
+            if en
+            else f"ошибки в {item['error_sessions']}/{item['observed_sessions']} сессий с примерами"
+        )
+        streak = (
+            (
+                f"; {item['clean_streak']} correct in a row"
+                if en
+                else f"; верно подряд: {item['clean_streak']}"
+            )
+            if item["clean_streak"]
+            else ""
+        )
+        parts.append(f"• <b>{_value(rule)}</b>: {statuses[item['status']]}\n{counts}{streak}")
+    target = next((item for item in history if item["error_sessions"]), None)
+    if target:
+        parts.append(
+            _label(
+                "Next focus" if en else "Следующий фокус", rule_label(target["rule_id"], language)
+            )
+        )
+        parts.append(_label("Example" if en else "Пример", target["example"]))
+        next_step = target.get("details", {}).get("next_step")
+        if next_step:
+            parts.append(_value(next_step))
+    parts.append(
+        "Only observed uses count; silence does not prove improvement."
+        if en
+        else "Учитываются только примеры применения. Отсутствие ошибки ещё не доказывает прогресс."
+    )
+    return "\n\n".join(parts)
+
+
 def format_profile(user: dict, progress: dict) -> str:
     language = language_of(user)
     completed = progress["completed_count"]
@@ -199,7 +329,6 @@ def format_profile(user: dict, progress: dict) -> str:
                 f"🏆 {_label('Level', level)}\n"
                 f"🔥 {_label('Sessions', 0)}\n"
                 f"{format_streak(progress, language)}\n"
-                f"📈 {_label('Progress', f'{progress_bar(0)} 0%')}\n\n"
                 f"🎯 {_label('Goal', goal)}\n"
                 f"📚 {_label('Topics', topics)}\n\n"
                 "🚀 Start your first practice so dialogum can collect stats."
@@ -209,23 +338,21 @@ def format_profile(user: dict, progress: dict) -> str:
             f"🏆 {_label('Уровень', level)}\n"
             f"🔥 {_label('Сессий', 0)}\n"
             f"{format_streak(progress, language)}\n"
-            f"📈 {_label('Прогресс', f'{progress_bar(0)} 0%')}\n\n"
             f"🎯 {_label('Цель', goal)}\n"
             f"📚 {_label('Темы', topics)}\n\n"
             "🚀 Начни первую практику, чтобы dialogum собрал статистику."
         )
 
     feedback = progress.get("last_feedback") or {}
-    cefr = feedback.get("estimated_cefr", "unknown")
+    cefr = feedback.get("estimated_cefr") if feedback.get("analysis_available", True) else None
+    cefr = cefr or level
     summary = progress.get("last_summary") or "No summary saved."
-    percent = min(100, completed * 7)
     if language == "en":
         return (
             f"<b>👤 {_value(display_name)}</b>\n\n"
             f"🏆 {_label('Level', cefr)}\n"
             f"🔥 {_label('Sessions', completed)}\n"
             f"{format_streak(progress, language)}\n"
-            f"📈 {_label('To next level', f'{progress_bar(percent)} {percent}%')}\n\n"
             f"🎯 {_label('Goal', goal)}\n"
             f"📚 {_label('Topics', topics)}\n\n"
             f"🧾 {_label('Last session', summary)}"
@@ -235,7 +362,6 @@ def format_profile(user: dict, progress: dict) -> str:
         f"🏆 {_label('Уровень', cefr)}\n"
         f"🔥 {_label('Сессий', completed)}\n"
         f"{format_streak(progress, language)}\n"
-        f"📈 {_label('До следующего уровня', f'{progress_bar(percent)} {percent}%')}\n\n"
         f"🎯 {_label('Цель', goal)}\n"
         f"📚 {_label('Темы', topics)}\n\n"
         f"🧾 {_label('Последняя сессия', summary)}"
@@ -491,19 +617,21 @@ def format_help(language: str | None = "ru") -> str:
         return (
             "<b>📖 What can dialogum do?</b>\n"
             "━━━━━━━━━━━━\n\n"
-            "🎙 <b>Practice:</b> gives you a short English speaking task.\n"
+            "🎙 <b>/ielts:</b> shortened IELTS Speaking Parts 1–3, five answers.\n"
             "💬 <b>Dialogue:</b> leads a short conversation with follow-up questions.\n"
             "🧾 <b>Feedback:</b> shows mistakes and better phrases after the session.\n"
-            "🧠 <b>Memory:</b> remembers goals, topics, and recurring weak spots.\n\n"
+            "🧠 <b>/progress:</b> recurring errors, observed improvements and next focus.\n"
+            "📚 <b>/vocabulary</b> and <b>/review:</b> phrases and revision.\n\n"
             "<b>Format:</b> 10 minutes a day, voice or text."
         )
     return (
         "<b>📖 Что умеет dialogum?</b>\n"
         "━━━━━━━━━━━━\n\n"
-        "🎙 <b>Практика:</b> дает короткое speaking-задание на английском.\n"
+        "🎙 <b>/ielts:</b> короткая практика IELTS Speaking Parts 1–3, пять ответов.\n"
         "💬 <b>Диалог:</b> ведет разговор и задает уточняющие вопросы.\n"
         "🧾 <b>Разбор:</b> после сессии показывает ошибки и улучшенные фразы.\n"
-        "🧠 <b>Память:</b> запоминает цели, темы и типичные слабые места.\n\n"
+        "🧠 <b>/progress:</b> повторяющиеся ошибки, улучшения и следующий фокус.\n"
+        "📚 <b>/vocabulary</b> и <b>/review:</b> фразы и повторение.\n\n"
         "<b>Формат:</b> 10 минут в день, голосовое сообщение или текст."
     )
 

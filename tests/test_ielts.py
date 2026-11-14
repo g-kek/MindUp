@@ -105,7 +105,7 @@ async def test_tutor_uses_learning_history_and_respects_deferred_corrections():
 async def test_selector_populates_plan_and_evaluator_receives_history():
     gateway = AsyncMock()
     gateway.generate_json.return_value = topic()
-    selected = await TopicSelector(gateway).select(profile={}, memories=[], recent_topics=[])
+    selected = await TopicSelector().select(profile={}, memories=[], recent_topics=[])
     assert selected.cue_card and len(selected.discussion_questions) == 2
     gateway.generate_json.return_value = fallback_feedback("en")
     await Evaluator(gateway).evaluate(

@@ -90,6 +90,7 @@ from mindup_bot.bot.keyboards import (
     VOCABULARY_LABEL_EN,
     VOCABULARY_REVIEW_LABEL,
     VOCABULARY_REVIEW_LABEL_EN,
+    analysis_retry_keyboard,
     first_session_keyboard,
     main_menu,
     option_keyboard,
@@ -108,6 +109,12 @@ from mindup_bot.bot.keyboards import (
 from mindup_bot.bot.reminders import schedule_user_reminder
 from mindup_bot.config import Settings
 from mindup_bot.db import Database
+from mindup_bot.exam_topics import (
+    UnknownIELTSTopic,
+    choose_exam_topic,
+    exam_topics_menu,
+    requested_exam_topic,
+)
 from mindup_bot.ielts import IELTS_TURNS, apply_ielts_flow, ensure_ielts_plan
 from mindup_bot.learning import RULES, grounded_feedback, priority_error_rule, rule_label
 from mindup_bot.services.speech import SpeechToText, TextToSpeech
@@ -129,6 +136,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("menu", menu))
     application.add_handler(CommandHandler("finish", finish))
     application.add_handler(CommandHandler("progress", progress))
+    application.add_handler(CommandHandler("analysis", session_analysis))
     application.add_handler(CommandHandler("ielts", ielts_practice))
     application.add_handler(CommandHandler("train", train_rule))
     application.add_handler(CommandHandler("topic", custom_topic))
@@ -246,6 +254,49 @@ async def train_rule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await rule_practice.start(update, context, user, requested_topic)
 
 
+async def session_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = await ensure_user(update, context)
+    db: Database = context.application.bot_data["db"]
+    sessions = await db.get_completed_sessions(user["telegram_id"], limit=1)
+    if not sessions:
+        await update.effective_message.reply_text(
+            "Complete a session first."
+            if user.get("interface_language") == "en"
+            else "Сначала заверши сессию.",
+        )
+        return
+    await show_or_retry_analysis(update, context, user, sessions[0])
+
+
+async def show_or_retry_analysis(update, context, user, session) -> None:
+    if session.get("feedback", {}).get("analysis_available") is False:
+        await finish_session(update, context, user, session, retry_failed=True)
+    else:
+        await send_session_feedback(
+            update,
+            context,
+            user,
+            session,
+            _feedback_from_session(session, user.get("interface_language")),
+        )
+
+
+async def handle_analysis_retry(update, context, user, data: str) -> None:
+    query = update.callback_query
+    if query is None:
+        return
+    try:
+        session_id = int(data.removeprefix("analysis:retry:"))
+    except ValueError:
+        await query.answer()
+        return
+    db: Database = context.application.bot_data["db"]
+    session = await db.get_session(session_id)
+    await query.answer()
+    if session and session["user_id"] == user["telegram_id"] and session["status"] == "completed":
+        await show_or_retry_analysis(update, context, user, session)
+
+
 async def custom_topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = await ensure_user(update, context)
     language = user.get("interface_language")
@@ -276,9 +327,9 @@ async def custom_topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     await db.set_custom_topic_pending(user["telegram_id"], True)
     message = (
-        "Send the topic you want to discuss. One phrase is enough."
+        "Choose an IELTS topic by name or number:\n\n" + exam_topics_menu(language)
         if language == "en"
-        else "Напиши тему, которую хочешь обсудить. Достаточно одной фразы."
+        else "Выбери тему IELTS: напиши название или номер.\n\n" + exam_topics_menu(language)
     )
     await update.effective_message.reply_text(
         message,
@@ -470,6 +521,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data.startswith("practice:"):
         await handle_practice_callback(update, context, user, data)
+        return
+
+    if data.startswith("analysis:retry:"):
+        await handle_analysis_retry(update, context, user, data)
         return
 
     if data.startswith("train:"):
@@ -966,7 +1021,7 @@ async def handle_settings_callback(
     if len(parts) >= 3 and parts[1] == "edit":
         field = parts[2]
         if field == "topics":
-            text = "📚 Choose topics:" if language == "en" else "📚 Выбери темы:"
+            text = "📚 Choose interests for /train (IELTS uses the exam bank):" if language == "en" else "📚 Интересы для /train (в IELTS используется экзаменационный банк):"
             await edit_callback_message(
                 query,
                 text,
@@ -1071,7 +1126,8 @@ async def ask_onboarding_step(
             update,
             "📚 Вопрос 3 из 6\n"
             "Прогресс: ▰▰▰▱▱▱ 50%\n\n"
-            "Какие темы интересны? Можно выбрать несколько.",
+            "Какие темы интересны для /train? Можно выбрать несколько. "
+            "В IELTS Speaking темы выбираются из экзаменационного банка.",
             reply_markup=topics_keyboard(data.get("topics") or []),
         )
     elif step == "correction_style":
@@ -1165,7 +1221,7 @@ async def start_practice(
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
     topic_selector: TopicSelector = context.application.bot_data["topic_selector"]
     memories = await db.get_recent_memories(user["telegram_id"], limit=5)
-    recent_topics = await db.get_recent_topics(user["telegram_id"], limit=8)
+    recent_topics = await db.get_recent_topics(user["telegram_id"], limit=32)
     try:
         topic = await topic_selector.select(profile=user, memories=memories, recent_topics=recent_topics)
     except Exception:
@@ -1194,7 +1250,7 @@ async def start_practice(
     await send_text_and_voice(
         update,
         context,
-        text,
+        text + exam_source_text(topic, user.get("interface_language")),
         topic.opening_question,
         practice_message_keyboard(message_id, user.get("interface_language")),
         voice=user.get("tts_voice"),
@@ -1228,9 +1284,16 @@ async def start_custom_topic_session(
             profile=user,
             requested_topic=requested_topic,
         )
-    except Exception:
-        logger.exception("Custom topic creation failed; using fallback topic")
-        topic = fallback_custom_topic(requested_topic)
+    except UnknownIELTSTopic:
+        await db.set_custom_topic_pending(user["telegram_id"], True)
+        language = user.get("interface_language")
+        message = (
+            "Choose a topic from the IELTS bank; use /train for other requests.\n\n"
+            if language == "en"
+            else "Выбери тему из банка IELTS; для других запросов используй /train.\n\n"
+        )
+        await update.effective_message.reply_text(message + exam_topics_menu(language))
+        return
 
     topic = ensure_ielts_plan(topic)
     session_id = await db.create_session(user["telegram_id"], topic.model_dump())
@@ -1255,7 +1318,7 @@ async def start_custom_topic_session(
     await send_text_and_voice(
         update,
         context,
-        text,
+        text + exam_source_text(topic, user.get("interface_language")),
         topic.opening_question,
         practice_message_keyboard(message_id, user.get("interface_language")),
         voice=user.get("tts_voice"),
@@ -1561,6 +1624,8 @@ async def finish_session(
     user: dict[str, Any],
     session: dict[str, Any],
     messages: list[dict[str, Any]] | None = None,
+    *,
+    retry_failed: bool = False,
 ) -> None:
     db: Database = context.application.bot_data["db"]
     evaluator: Evaluator = context.application.bot_data["evaluator"]
@@ -1587,7 +1652,19 @@ async def finish_session(
         logger.exception("Evaluation failed; using fallback feedback")
         feedback = fallback_feedback(language)
     feedback = grounded_feedback(feedback, messages)
-    await db.complete_session(session["id"], feedback.summary, feedback.model_dump())
+    saved = await db.complete_session(
+        session["id"],
+        feedback.summary,
+        feedback.model_dump(),
+        retry_failed=retry_failed,
+    )
+    if not saved:
+        await update.effective_message.reply_text(
+            format_feedback(feedback, language),
+            parse_mode=ParseMode.HTML,
+            reply_markup=analysis_retry_keyboard(session["id"], language),
+        )
+        return
     await update_processing_message(processing_message, format_processing_status(3, language))
 
     if feedback.analysis_available:
@@ -1630,9 +1707,25 @@ async def finish_session(
             )
     await update_processing_message(processing_message, format_processing_status(4, language))
 
+    await send_session_feedback(update, context, user, session, feedback)
+
+
+async def send_session_feedback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user: dict[str, Any],
+    session: dict[str, Any],
+    feedback: Feedback,
+) -> None:
+    db: Database = context.application.bot_data["db"]
+    language = "en" if user.get("interface_language") == "en" else "ru"
     await update.effective_message.reply_text(
         format_feedback(feedback, user.get("interface_language")),
-        reply_markup=main_menu(user.get("interface_language")),
+        reply_markup=(
+            main_menu(user.get("interface_language"))
+            if feedback.analysis_available
+            else analysis_retry_keyboard(session["id"], language)
+        ),
         parse_mode=ParseMode.HTML,
     )
     if feedback.errors:
@@ -2060,22 +2153,22 @@ def _feedback_from_session(session: dict[str, Any], language: str | None) -> Fee
 
 
 def fallback_topic() -> TopicChoice:
-    return TopicChoice(
-        topic_id="daily_choices",
-        title="Daily choices",
-        opening_question="What is one small decision today that could make your week better?",
-        rationale="Useful general topic for any level.",
-    )
+    return choose_exam_topic([])
 
 
 def fallback_custom_topic(requested_topic: str) -> TopicChoice:
-    clean_topic = requested_topic.strip()[:80] or "Custom topic"
-    return TopicChoice(
-        topic_id=f"custom_{uuid.uuid4().hex[:8]}",
-        title=clean_topic,
-        opening_question=f"What is your opinion about {clean_topic}? Give one clear example.",
-        rationale="The user requested this topic.",
+    return requested_exam_topic(requested_topic)
+
+
+def exam_source_text(topic: TopicChoice, language: str | None) -> str:
+    if not topic.source_url:
+        return ""
+    label = (
+        "IELTS preparation topic; adapted questions. Source: "
+        if language == "en"
+        else "Тема из материалов IELTS, вопросы адаптированы. Источник: "
     )
+    return f"\n\n{label}{topic.source_label}\n{topic.source_url}"
 
 
 def fallback_topic_vocabulary(session: dict[str, Any], language: str) -> TopicVocabulary:

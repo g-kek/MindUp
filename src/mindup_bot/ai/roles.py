@@ -18,7 +18,8 @@ from mindup_bot.ai.schemas import (
     TutorReply,
     VocabularyUpdate,
 )
-from mindup_bot.ielts import apply_ielts_flow, ensure_ielts_plan, next_ielts_prompt
+from mindup_bot.exam_topics import choose_exam_topic, requested_exam_topic
+from mindup_bot.ielts import apply_ielts_flow, next_ielts_prompt
 from mindup_bot.learning import RULES, grounded_feedback
 
 
@@ -27,22 +28,7 @@ def _compact_json(value: Any) -> str:
 
 
 class TopicSelector:
-    system_instruction = """
-You are TopicSelector for shortened IELTS Speaking preparation.
-Create a coherent 5-answer practice: opening_question and second_question are Part 1 questions
-on familiar everyday topics. cue_card is a Part 2 task with 3 bullet points and an explanation
-point about a personal experience. discussion_questions contains exactly two more abstract,
-analytical Part 3 questions related to the cue card. Set practice_mode=ielts.
-Use the learner's priority rules to create natural opportunities to practise them, without
-revealing model answers or turning an exam question into a grammar test. Use difficulties
-from rule_practice_history to choose follow-up topics; it is prompted exercise evidence.
-Pick one fresh, discussable topic that fits the user's CEFR level, goals, interests, memories,
-and recently used topics. The result must be practical for a 10-minute speaking session.
-Avoid repeating recent topics. Ask exactly one opening question in English.
-""".strip()
-
-    def __init__(self, gemini: GeminiGateway) -> None:
-        self._gemini = gemini
+    """Choose only from the source-backed exam bank, independently of preferences."""
 
     async def select(
         self,
@@ -51,25 +37,7 @@ Avoid repeating recent topics. Ask exactly one opening question in English.
         memories: list[dict[str, Any]],
         recent_topics: list[dict[str, Any]],
     ) -> TopicChoice:
-        prompt = f"""
-User profile:
-{_compact_json(_profile_view(profile))}
-
-Relevant memory summaries:
-{_compact_json([m["summary"] for m in memories])}
-
-Recently used topics:
-{_compact_json([t["title"] for t in recent_topics])}
-
-Choose a topic. Keep the opening question accessible for {profile.get("english_level") or "B1"}.
-""".strip()
-        topic = await self._gemini.generate_json(
-            system_instruction=self.system_instruction,
-            prompt=prompt,
-            schema=TopicChoice,
-            temperature=0.7,
-        )
-        return ensure_ielts_plan(topic)
+        return choose_exam_topic(recent_topics)
 
     async def from_custom_topic(
         self,
@@ -77,23 +45,7 @@ Choose a topic. Keep the opening question accessible for {profile.get("english_l
         profile: dict[str, Any],
         requested_topic: str,
     ) -> TopicChoice:
-        prompt = f"""
-User profile:
-{_compact_json(_profile_view(profile))}
-
-Requested topic:
-{requested_topic}
-
-Create one practical 10-minute speaking topic from the user's request.
-Return an English title and exactly one accessible opening question in English.
-""".strip()
-        topic = await self._gemini.generate_json(
-            system_instruction=self.system_instruction,
-            prompt=prompt,
-            schema=TopicChoice,
-            temperature=0.55,
-        )
-        return ensure_ielts_plan(topic)
+        return requested_exam_topic(requested_topic)
 
 
 class Tutor:
@@ -196,6 +148,7 @@ grammatical range/accuracy. The evaluator has NO audio, even for voice_file_id m
 never evaluate pronunciation, pace, hesitation or prosody, or estimate an overall IELTS band.
 For conversation sessions ielts may be null. Assess only parts actually attempted; an early
 finish is not a complete test. CEFR is a tentative language estimate only.
+Return estimated_cefr as a short CEFR code only; put uncertainty in summary, never in that code.
 Keep the summary, strength, main issue and micro-homework concise, specific and supportive.
 """.strip()
 
@@ -233,6 +186,7 @@ evidence, next steps and IELTS notes in {feedback_language}. Quote English verba
             prompt=prompt,
             schema=Feedback,
             temperature=0.35,
+            compact_schema=True,
         )
         return grounded_feedback(feedback, messages)
 

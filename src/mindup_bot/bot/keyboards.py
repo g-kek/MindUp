@@ -168,7 +168,7 @@ def settings_keyboard(language: str | None = "ru") -> InlineKeyboardMarkup:
         buttons = [
             [InlineKeyboardButton("🏆 Level", callback_data="settings:edit:english_level")],
             [InlineKeyboardButton("🎯 Goal", callback_data="settings:edit:goal")],
-            [InlineKeyboardButton("📚 Topics", callback_data="settings:edit:topics")],
+            [InlineKeyboardButton("📚 Interests (/train)", callback_data="settings:edit:topics")],
             [InlineKeyboardButton("🧾 Corrections", callback_data="settings:edit:correction_style")],
             [InlineKeyboardButton("🔔 Reminder", callback_data="settings:edit:reminder_time")],
             [InlineKeyboardButton("🔊 Bot voice", callback_data="settings:edit:tts_voice")],
@@ -179,7 +179,7 @@ def settings_keyboard(language: str | None = "ru") -> InlineKeyboardMarkup:
         buttons = [
             [InlineKeyboardButton("🏆 Уровень", callback_data="settings:edit:english_level")],
             [InlineKeyboardButton("🎯 Цель", callback_data="settings:edit:goal")],
-            [InlineKeyboardButton("📚 Темы", callback_data="settings:edit:topics")],
+            [InlineKeyboardButton("📚 Интересы (/train)", callback_data="settings:edit:topics")],
             [InlineKeyboardButton("🧾 Исправления", callback_data="settings:edit:correction_style")],
             [InlineKeyboardButton("🔔 Напоминание", callback_data="settings:edit:reminder_time")],
             [InlineKeyboardButton("🔊 Голосовые сообщения", callback_data="settings:edit:tts_voice")],
@@ -388,4 +388,15 @@ def skill_drill_keyboard(
         label = f"Потренировать: {skill_label}"
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton(label, callback_data=f"drill:start:{session_id}:{skill_slug}")]]
+    )
+
+
+def analysis_retry_keyboard(session_id: int, language: str | None = "ru") -> InlineKeyboardMarkup:
+    label = "Retry session analysis" if language == "en" else "Повторить разбор сессии"
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(label, callback_data=f"analysis:retry:{session_id}"),
+            ]
+        ]
     )

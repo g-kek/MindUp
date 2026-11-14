@@ -450,7 +450,13 @@ class Database:
                     _json_dumps(
                         {
                             key: topic[key]
-                            for key in ("second_question", "cue_card", "discussion_questions")
+                            for key in (
+                                "second_question",
+                                "cue_card",
+                                "discussion_questions",
+                                "source_url",
+                                "source_label",
+                            )
                             if key in topic
                         }
                     ),
@@ -502,15 +508,29 @@ class Database:
             await db.commit()
 
     async def complete_session(
-        self, session_id: int, summary: str, feedback: dict[str, Any]
-    ) -> None:
+        self,
+        session_id: int,
+        summary: str,
+        feedback: dict[str, Any],
+        *,
+        retry_failed: bool = False,
+    ) -> bool:
         # Session completion and evidence are committed together. Repeated completion
         # cannot duplicate evidence or overwrite a completed evaluation.
         async with self.connect() as db:
             await db.execute("BEGIN IMMEDIATE")
             session = await self._fetchone(db, "SELECT * FROM sessions WHERE id = ?", (session_id,))
-            if session is None or session["status"] != "active":
-                return
+            if session is None:
+                return False
+            old_feedback = _json_loads(session["feedback_json"], {})
+            can_retry = (
+                retry_failed
+                and session["status"] == "completed"
+                and old_feedback.get("analysis_available") is False
+                and feedback.get("analysis_available") is True
+            )
+            if session["status"] != "active" and not can_retry:
+                return False
             observations = []
             if "errors" in feedback or "correct_usage" in feedback:
                 messages = await self._fetchall(
@@ -530,7 +550,7 @@ class Database:
             await db.execute(
                 """
                 UPDATE sessions SET status = 'completed', summary = ?, feedback_json = ?,
-                    completed_at = CURRENT_TIMESTAMP WHERE id = ?
+                    completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP) WHERE id = ?
                 """,
                 (summary, _json_dumps(feedback), session_id),
             )
@@ -546,6 +566,7 @@ class Database:
                 ],
             )
             await db.commit()
+            return True
 
     async def get_learning_profile(self, user_id: int) -> list[dict[str, Any]]:
         async with self.connect() as db:

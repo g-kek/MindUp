@@ -32,6 +32,8 @@ class TopicChoice(BaseModel):
     second_question: str = Field(default="", max_length=400)
     cue_card: str = Field(default="", max_length=900)
     discussion_questions: list[str] = Field(default_factory=list, max_length=2)
+    source_url: str = Field(default="", max_length=350)
+    source_label: str = Field(default="", max_length=120)
 
 
 class TutorReply(BaseModel):
@@ -94,7 +96,10 @@ class Feedback(BaseModel):
     main_issue: str = Field(max_length=300)
     improved_phrases: list[ImprovedPhrase] = Field(default_factory=list, max_length=2)
     micro_homework: str = Field(max_length=300)
-    estimated_cefr: str = Field(max_length=40)
+    estimated_cefr: str = Field(
+        max_length=40,
+        description="One CEFR code only, e.g. B1 or A2+; no explanations",
+    )
     scores: list[ScoreItem] = Field(default_factory=list, max_length=5)
     analysis_available: bool = True
     errors: list[LanguageError] = Field(default_factory=list, max_length=12)

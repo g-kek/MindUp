@@ -93,7 +93,7 @@ async def test_five_turn_practice_feedback_history_and_vocabulary(
     bot_data = {
         "db": db,
         "settings": SimpleNamespace(min_dialogue_turns=3, max_dialogue_turns=4),
-        "topic_selector": TopicSelector(gateway),
+        "topic_selector": TopicSelector(),
         "tutor": Tutor(gateway),
         "evaluator": Evaluator(gateway),
         "memory_updater": MemoryUpdater(gateway),

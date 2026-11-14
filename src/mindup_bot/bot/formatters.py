@@ -346,7 +346,7 @@ def format_profile(user: dict, progress: dict) -> str:
                 f"🔥 {_label('Sessions', 0)}\n"
                 f"{format_streak(progress, language)}\n"
                 f"🎯 {_label('Goal', goal)}\n"
-                f"📚 {_label('Topics', topics)}\n\n"
+                f"📚 {_label('Interests (/train)', topics)}\n\n"
                 "🚀 Start your first practice so dialogum can collect stats."
             )
         return (
@@ -355,7 +355,7 @@ def format_profile(user: dict, progress: dict) -> str:
             f"🔥 {_label('Сессий', 0)}\n"
             f"{format_streak(progress, language)}\n"
             f"🎯 {_label('Цель', goal)}\n"
-            f"📚 {_label('Темы', topics)}\n\n"
+            f"📚 {_label('Интересы (/train)', topics)}\n\n"
             "🚀 Начни первую практику, чтобы dialogum собрал статистику."
         )
 
@@ -370,7 +370,7 @@ def format_profile(user: dict, progress: dict) -> str:
             f"🔥 {_label('Sessions', completed)}\n"
             f"{format_streak(progress, language)}\n"
             f"🎯 {_label('Goal', goal)}\n"
-            f"📚 {_label('Topics', topics)}\n\n"
+            f"📚 {_label('Interests (/train)', topics)}\n\n"
             f"🧾 {_label('Last session', summary)}"
         )
     return (
@@ -379,7 +379,7 @@ def format_profile(user: dict, progress: dict) -> str:
         f"🔥 {_label('Сессий', completed)}\n"
         f"{format_streak(progress, language)}\n"
         f"🎯 {_label('Цель', goal)}\n"
-        f"📚 {_label('Темы', topics)}\n\n"
+        f"📚 {_label('Интересы (/train)', topics)}\n\n"
         f"🧾 {_label('Последняя сессия', summary)}"
     )
 
@@ -395,7 +395,7 @@ def format_settings(user: dict) -> str:
             "━━━━━━━━━━━━\n\n"
             f"🏆 {_label('Level', user.get('english_level') or 'not set')}\n"
             f"🎯 {_label('Goal', label_value('goal', user.get('goal'), language))}\n"
-            f"📚 {_label('Topics', topics)}\n"
+            f"📚 {_label('Interests (/train)', topics)}\n"
             f"🧾 {_label('Corrections', label_value('correction', user.get('correction_style'), language))}\n"
             f"🔔 {_label('Reminder', label_value('reminder', user.get('reminder_time'), language))}\n"
             f"🔊 {_label('Bot voice', label_value('voice', user.get('tts_voice') or 'en-US-JennyNeural', language))}\n"
@@ -407,7 +407,7 @@ def format_settings(user: dict) -> str:
         "━━━━━━━━━━━━\n\n"
         f"🏆 {_label('Уровень', user.get('english_level') or 'not set')}\n"
         f"🎯 {_label('Цель', label_value('goal', user.get('goal'), language))}\n"
-        f"📚 {_label('Темы', topics)}\n"
+        f"📚 {_label('Интересы (/train)', topics)}\n"
         f"🧾 {_label('Исправления', label_value('correction', user.get('correction_style'), language))}\n"
         f"🔔 {_label('Напоминание', label_value('reminder', user.get('reminder_time'), language))}\n"
         f"🔊 {_label('Голосовые сообщения', label_value('voice', user.get('tts_voice') or 'en-US-JennyNeural', language))}\n"
@@ -637,6 +637,7 @@ def format_help(language: str | None = "ru") -> str:
             "💬 <b>Dialogue:</b> leads a short conversation with follow-up questions.\n"
             "🧾 <b>Feedback:</b> shows mistakes and better phrases after the session.\n"
             "🧠 <b>/progress:</b> recurring errors, observed improvements and next focus.\n"
+            "🧾 <b>/analysis:</b> show or retry the latest session feedback.\n"
             "🧩 <b>/train rule or topic:</b> contrasts, examples and five checked exercises.\n"
             "📚 <b>/vocabulary</b> and <b>/review:</b> phrases and revision.\n\n"
             "<b>Format:</b> 10 minutes a day, voice or text."
@@ -648,6 +649,7 @@ def format_help(language: str | None = "ru") -> str:
         "💬 <b>Диалог:</b> ведет разговор и задает уточняющие вопросы.\n"
         "🧾 <b>Разбор:</b> после сессии показывает ошибки и улучшенные фразы.\n"
         "🧠 <b>/progress:</b> повторяющиеся ошибки, улучшения и следующий фокус.\n"
+        "🧾 <b>/analysis:</b> открыть или повторить последний разбор.\n"
         "🧩 <b>/train правило или тема:</b> сравнения, примеры и пять заданий с проверкой.\n"
         "📚 <b>/vocabulary</b> и <b>/review:</b> фразы и повторение.\n\n"
         "<b>Формат:</b> 10 минут в день, голосовое сообщение или текст."

@@ -67,7 +67,7 @@ def build_application() -> Application:
         {
             "settings": settings,
             "db": db,
-            "topic_selector": TopicSelector(gemini),
+            "topic_selector": TopicSelector(),
             "tutor": Tutor(gemini),
             "evaluator": Evaluator(gemini),
             "memory_updater": MemoryUpdater(gemini),
